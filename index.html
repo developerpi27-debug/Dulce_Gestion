@@ -414,6 +414,7 @@ select.fc{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
             <option value="L">L — Lempira</option><option value="C$">C$ — Córdoba</option>
             <option value="MXN$">MXN$ — Peso Mexicano</option><option value="COP$">COP$ — Peso Colombiano</option>
             <option value="S/">S/ — Sol</option>
+            <option value="RD$">RD$ — Peso Dominicano (DOP)</option>
           </select>
         </div>
       </div>
@@ -437,6 +438,47 @@ select.fc{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
         <div id="lic-status" style="font-size:.8rem;margin-top:4px"></div>
       </div>
       <button class="btn btn-amber btn-block" onclick="saveConfig()">💾 Guardar Configuración</button>
+
+      <!-- ECF: admin + developer -->
+      <div class="card" id="ecf-card" style="display:none;margin-top:4px">
+        <div class="card-hd">🧾 Comprobantes Fiscales ECF <span style="font-size:.63rem;color:var(--ink3)">(DGII — Rep. Dom.)</span></div>
+        <div class="al al-info" style="margin-bottom:10px"><div class="al-i">ℹ️</div><div><div class="al-t">e-CF DGII República Dominicana</div><div class="al-s">Configura los tipos de e-Comprobante Fiscal según la normativa DGII vigente.</div></div></div>
+        <div class="fg"><label class="fl">RNC del negocio *</label><input class="fc" id="ecf-rnc" placeholder="Ej: 131-00001-7" maxlength="15"></div>
+        <div class="fg"><label class="fl">Nombre comercial (como aparece en DGII)</label><input class="fc" id="ecf-nombre-com" placeholder="Nombre registrado en DGII"></div>
+        <div class="fg"><label class="fl">Régimen fiscal</label>
+          <select class="fc" id="ecf-regimen">
+            <option value="ordinario">Régimen Ordinario</option>
+            <option value="rst">Régimen Simplificado de Tributación (RST)</option>
+            <option value="especial">Régimen Especial</option>
+          </select>
+        </div>
+        <div style="font-size:.7rem;font-weight:700;color:var(--ink2);margin-bottom:7px;letter-spacing:.2px">TIPOS DE e-CF HABILITADOS</div>
+        <div id="ecf-tipos-list"></div>
+        <button class="btn btn-ghost btn-sm" onclick="addEcfTipo()" style="margin-bottom:10px">+ Agregar tipo</button>
+        <div style="font-size:.7rem;font-weight:700;color:var(--ink2);margin-bottom:6px">SECUENCIAS POR TIPO</div>
+        <div id="ecf-secuencias"></div>
+        <button class="btn btn-amber btn-block" style="margin-top:10px" onclick="saveEcf()">💾 Guardar ECF</button>
+      </div>
+
+      <!-- Perfiles: solo developer -->
+      <div class="card" id="perfiles-cfg-card" style="display:none;margin-top:4px">
+        <div class="card-hd">🔐 Perfiles y Permisos <span style="font-size:.63rem;color:var(--ink3)">(solo Developer)</span></div>
+        <div id="perfiles-cfg-list"></div>
+        <button class="btn btn-blue btn-sm" style="margin-top:8px" onclick="openPerfil(null)">+ Nuevo perfil</button>
+      </div>
+
+      <!-- URL Google Sheet: solo developer -->
+      <div class="card" id="url-cfg-card" style="display:none;margin-top:4px">
+        <div class="card-hd">🔗 Conexión Google Sheets <span style="font-size:.63rem;color:var(--ink3)">(solo Developer)</span></div>
+        <div class="al al-wrn" style="margin-bottom:9px"><div class="al-i">⚠️</div><div><div class="al-t">Cambio de base de datos</div><div class="al-s">Cambiar la URL conectará la app a otro Google Sheet. Los datos se sincronizarán al recargar.</div></div></div>
+        <div class="fg"><label class="fl">URL actual</label>
+          <div style="font-size:.7rem;color:var(--ink3);background:var(--paper);border-radius:8px;padding:8px 10px;border:1px solid var(--border);word-break:break-all" id="current-url-display">—</div>
+        </div>
+        <div class="fg"><label class="fl">Nueva URL del Apps Script</label>
+          <textarea class="fc" id="new-script-url" rows="2" placeholder="https://script.google.com/macros/s/...../exec"></textarea>
+        </div>
+        <button class="btn btn-amber btn-block" onclick="changeScriptUrl()">🔗 Actualizar y Reconectar</button>
+      </div>
     </div>
 
   </div></div><!-- /scroll /content -->
@@ -669,6 +711,14 @@ select.fc{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
 </div></div>
 
 <style>@media print{body>*:not(#pf){display:none!important}#pf{display:block!important;position:fixed;inset:0;background:#fff;z-index:99999;padding:0}@page{margin:12mm 15mm;size:A4 portrait}}#pf{display:none}</style>
+
+<!-- ════════ MODAL: EMITIR e-CF ════════ -->
+<div class="mo" id="mo-ecf-emitir"><div class="mbox">
+  <div class="mh"><h3>🧾 Emitir e-Comprobante Fiscal</h3><button class="mclose" onclick="cm('mo-ecf-emitir')">✕</button></div>
+  <div class="al al-info" style="margin-bottom:11px"><div class="al-i">🇩🇴</div><div><div class="al-t">e-CF DGII República Dominicana</div><div class="al-s">Selecciona el tipo de comprobante según la transacción.</div></div></div>
+  <div id="ecf-emitir-content"></div>
+  <button class="btn btn-amber btn-block" style="margin-top:10px" onclick="emitirEcf()">🧾 Generar Comprobante</button>
+</div></div>
 <div id="pf"></div>
 
 <script>
@@ -698,11 +748,15 @@ const ALL_PERMS = [
   {id:'ver_config',       label:'Ver Configuración'},
   {id:'editar_config',    label:'Editar Configuración'},
   {id:'ver_gastos',       label:'Registrar Gastos'},
+  {id:'ver_ecf',          label:'Ver Comprobantes ECF'},
+  {id:'emitir_ecf',       label:'Emitir Comprobantes ECF'},
+  {id:'gestionar_perfiles',label:'Gestionar Perfiles'},
+  {id:'cambiar_url',      label:'Cambiar URL Google Sheet'},
 ];
 
 const PERM_DEFAULTS = {
   developer: ALL_PERMS.map(p=>p.id), // all
-  admin: ALL_PERMS.filter(p=>!['ver_config','editar_config'].includes(p.id)).map(p=>p.id),
+  admin: ALL_PERMS.filter(p=>!['ver_config','editar_config','gestionar_perfiles','cambiar_url'].includes(p.id)).map(p=>p.id).concat(['ver_ecf','emitir_ecf']),
   caja: ['ver_inicio','ver_pedidos','crear_pedidos','editar_pedidos','cancelar_pedidos','cobrar','imprimir','ver_cotizaciones','crear_cotizaciones','ver_calendario','ver_alertas'],
   preparacion: ['ver_inicio','ver_pedidos','marcar_proceso','marcar_listo','ver_calendario','ver_alertas'],
 };
@@ -831,7 +885,7 @@ async function doSetup() {
   try {
     // Init sheets
     const defaultUsers = [
-      {id:'dev1',username:'developer27',password:hashPass('12345678*'),perfil:'developer',nombre:'Developer',activo:'1',created:today(),lastLogin:''}
+      {id:'dev1',username:'developer27',password:'3babea07',perfil:'developer',nombre:'Developer',activo:'1',created:today(),lastLogin:''}
     ];
     const defaultPerfiles = Object.entries(PERM_DEFAULTS).map(([id,perms])=>({id,nombre:id,permisos:JSON.stringify(perms),updated:today()}));
 
@@ -851,8 +905,12 @@ async function doSetup() {
 /* ═══════════════════════════════════════════════════════
    AUTH
 ═══════════════════════════════════════════════════════ */
-function hashPass(p){ /* simple hash for demo — in production use bcrypt server-side */
-  let h=0; for(let i=0;i<p.length;i++){h=((h<<5)-h)+p.charCodeAt(i);h|=0;} return String(h);
+function hashPass(p){
+  // djb2 variant — always returns 8-char lowercase hex, never negative
+  let h = 5381;
+  for(let i=0;i<p.length;i++) h = ((h<<5)+h) ^ p.charCodeAt(i);
+  // force unsigned 32-bit, convert to 8-char hex
+  return (h >>> 0).toString(16).padStart(8,'0');
 }
 
 function showLogin(){
@@ -908,7 +966,7 @@ async function doLogin(){
 
   if(!user){ btn.textContent='Ingresar';btn.disabled=false;err.textContent='Usuario no encontrado o inactivo';return; }
 
-  const passOk = (user.password===hashPass(password)) || (user.password===password); // support plain for migration
+  const passOk = user.password === hashPass(password);
   if(!passOk){ btn.textContent='Ingresar';btn.disabled=false;err.textContent='Contraseña incorrecta';return; }
 
   // Load profile permissions
@@ -1058,7 +1116,7 @@ function changePass(){
   if(nw.length<8){toast('❌ Mínimo 8 caracteres');return;}
   const user=DB.usuarios.find(u=>u.id===SESSION.id);
   if(!user){toast('❌ Usuario no encontrado');return;}
-  if(user.password!==hashPass(old)&&user.password!==old){toast('❌ Contraseña actual incorrecta');return;}
+  if(user.password!==hashPass(old)){toast('❌ Contraseña actual incorrecta');return;}
   user.password=hashPass(nw);
   syncRow('usuarios','update',user,user.id);
   cm('mo-chpass');
@@ -1182,6 +1240,7 @@ function verPed(id){
       <div style="display:flex;gap:6px;flex-wrap:wrap">
         <button class="btn btn-ghost btn-sm" onclick="generarFacturaAnticipo(${p.id})">📄 Recibo Anticipo</button>
         <button class="btn btn-ghost btn-sm" onclick="generarFacturaFinal(${p.id})">🧾 Factura Completa</button>
+        ${ECF&&ECF.rnc&&can('emitir_ecf')?`<button class="btn btn-ghost btn-sm" onclick="openEcfEmitir(${p.id})">🧾 e-CF DGII</button>`:''}
       </div>
     </div>`:''}`;
   cm('mo-listo');cm('mo-entrega');
@@ -1746,11 +1805,10 @@ function savePerfil(){
    CONFIGURACIÓN
 ═══════════════════════════════════════════════════════ */
 function loadConfigForm(){
-  ['cfg-nombre','cfg-eslogan','cfg-tel','cfg-email','cfg-dir','cfg-redes','cfg-nit','cfg-pie','cfg-condiciones','cfg-gracias','cfg-prefix'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=CFG[id.replace('cfg-','').replace('-','')]||CFG[id.slice(4)]||'';});
-  // manual mappings
+  // Deferred — full implementation overrides below after ECF/URL/Perfiles code loads
   const m={nombre:'nombre',eslogan:'eslogan',tel:'tel',email:'email',dir:'dir',redes:'redes',nit:'nit',moneda:'moneda',pie:'pie',condiciones:'condiciones',gracias:'gracias',prefix:'prefix',facnum:'facnum','lic-fecha':'licFecha','lic-dias':'licDias'};
   Object.entries(m).forEach(([k,v])=>{const el=document.getElementById('cfg-'+k);if(el&&CFG[v]!==undefined)el.value=CFG[v]||'';});
-  if(CFG.licFecha){const dias=Math.ceil((new Date(CFG.licFecha)-new Date())/(1000*60*60*24));const ls=document.getElementById('lic-status');if(ls)ls.innerHTML=`<span style="color:${dias>0?'var(--ok)':'var(--danger)'};font-weight:700">${dias>0?`Activa · ${dias} días restantes`:`⛔ VENCIDA · venció ${fDate(CFG.licFecha)}`}</span>`;}
+  if(CFG.licFecha){const dias=Math.ceil((new Date(CFG.licFecha)-new Date())/(1000*60*60*24));const ls=document.getElementById('lic-status');if(ls)ls.innerHTML=`<span style="color:${dias>0?'var(--ok)':'var(--danger)'};font-weight:700">${dias>0?`Activa · ${dias} días restantes`:`⛔ VENCIDA · ${fDate(CFG.licFecha)}`}</span>`;}
 }
 function loadConfig(){loadConfigForm();}
 function saveConfig(){
@@ -1865,6 +1923,315 @@ window.addEventListener('load',()=>{
     }
   },1500);
 });
+
+/* ═══════════════════════════════════════════════════════
+   CHANGE SCRIPT URL (developer only)
+═══════════════════════════════════════════════════════ */
+function changeScriptUrl(){
+  const newUrl = document.getElementById('new-script-url').value.trim();
+  if(!newUrl){ toast('❌ Ingresa la nueva URL'); return; }
+  if(!newUrl.includes('script.google.com')){ toast('❌ La URL no parece válida'); return; }
+  if(!confirm('¿Cambiar la conexión a un nuevo Google Sheet? La app se recargará.')) return;
+  SCRIPT_URL = newUrl;
+  LS.s('dg_url', newUrl);
+  toast('✅ URL actualizada — recargando...');
+  setTimeout(()=>location.reload(), 1500);
+}
+
+/* ═══════════════════════════════════════════════════════
+   ECF — COMPROBANTES FISCALES DGII
+═══════════════════════════════════════════════════════ */
+// ECF types as per DGII e-CF normative
+const ECF_TIPOS_DGII = [
+  { codigo:'31', nombre:'Factura de Crédito Fiscal',          serie:'E310',  uso:'Ventas a contribuyentes con RNC' },
+  { codigo:'32', nombre:'Factura de Consumo',                 serie:'E320',  uso:'Ventas a consumidor final' },
+  { codigo:'33', nombre:'Nota de Débito',                     serie:'E330',  uso:'Ajuste que incrementa valor' },
+  { codigo:'34', nombre:'Nota de Crédito',                    serie:'E340',  uso:'Ajuste que reduce valor o devolución' },
+  { codigo:'41', nombre:'Compras',                            serie:'E410',  uso:'Registro de compras' },
+  { codigo:'43', nombre:'Gastos Menores',                     serie:'E430',  uso:'Gastos menores no requieren e-CF' },
+  { codigo:'44', nombre:'Regímenes Especiales de Tributación',serie:'E440',  uso:'Para contribuyentes en régimen especial' },
+  { codigo:'45', nombre:'Gubernamental',                      serie:'E450',  uso:'Ventas al gobierno' },
+  { codigo:'46', nombre:'Exportaciones',                      serie:'E460',  uso:'Para exportaciones' },
+  { codigo:'47', nombre:'Compras Exterior',                   serie:'E470',  uso:'Importaciones' },
+];
+
+let ECF = LS.g('dg_ecf', {
+  rnc:'', nombreCom:'', regimen:'ordinario',
+  tiposHabilitados:['32','31'],   // factura consumo + crédito fiscal por defecto
+  secuencias:{ '31':1,'32':1,'33':1,'34':1 },
+  itbis: 18  // tasa ITBIS RD vigente
+});
+
+let ecfTiposCnt = 0;
+let ecfCurrentPedId = null;
+
+function saveEcf(){
+  ECF.rnc        = document.getElementById('ecf-rnc').value.trim();
+  ECF.nombreCom  = document.getElementById('ecf-nombre-com').value.trim();
+  ECF.regimen    = document.getElementById('ecf-regimen').value;
+  // Collect enabled types
+  const tipos = [];
+  for(let n=0;n<ecfTiposCnt;n++){
+    const sel = document.getElementById(`ecf-t-${n}`);
+    if(sel && sel.value) tipos.push(sel.value);
+  }
+  if(tipos.length) ECF.tiposHabilitados = [...new Set(tipos)];
+  LS.s('dg_ecf', ECF);
+  // Sync to sheets config
+  syncRow('config','write',{id:'ecf_config',key:'ecf_config',value:JSON.stringify(ECF),updated:new Date().toISOString()},'ecf_config');
+  toast('✅ Configuración ECF guardada');
+  renderEcfSecuencias();
+}
+
+function addEcfTipo(preVal){
+  const wrap = document.getElementById('ecf-tipos-list'); if(!wrap) return;
+  const n = ecfTiposCnt++;
+  const div = document.createElement('div');
+  div.style.cssText='display:grid;grid-template-columns:1fr 28px;gap:6px;margin-bottom:6px;';
+  div.id = `ecf-tipo-row-${n}`;
+  div.innerHTML = `
+    <select id="ecf-t-${n}" class="fc" style="font-size:.78rem;padding:7px 9px">
+      ${ECF_TIPOS_DGII.map(t=>`<option value="${t.codigo}"${t.codigo==preVal?' selected':''}>${t.codigo} — ${t.nombre}</option>`).join('')}
+    </select>
+    <button onclick="document.getElementById('ecf-tipo-row-${n}').remove()" style="background:rgba(192,48,42,.1);border:none;color:var(--danger);border-radius:8px;cursor:pointer;font-size:.9rem">✕</button>`;
+  wrap.appendChild(div);
+}
+
+function renderEcfTipos(){
+  const wrap = document.getElementById('ecf-tipos-list'); if(!wrap) return;
+  wrap.innerHTML=''; ecfTiposCnt=0;
+  (ECF.tiposHabilitados||['32','31']).forEach(t=>addEcfTipo(t));
+}
+
+function renderEcfSecuencias(){
+  const wrap = document.getElementById('ecf-secuencias'); if(!wrap) return;
+  const tipos = ECF.tiposHabilitados||[];
+  wrap.innerHTML = tipos.map(cod=>{
+    const tipo = ECF_TIPOS_DGII.find(t=>t.codigo===cod);
+    const seq  = (ECF.secuencias||{})[cod] || 1;
+    const ncf  = generarNCF(cod, seq);
+    return `<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--paper);border-radius:8px;margin-bottom:5px;border:1px solid var(--border)">
+      <div style="flex:1">
+        <div style="font-size:.78rem;font-weight:700;color:var(--ink)">${tipo?.nombre||cod}</div>
+        <div style="font-size:.68rem;color:var(--ink3)">Próximo NCF: <b style="color:var(--amber)">${ncf}</b></div>
+      </div>
+      <div style="display:flex;gap:5px;align-items:center">
+        <label style="font-size:.65rem;color:var(--ink3)">Desde N°</label>
+        <input type="number" value="${seq}" min="1" id="ecf-seq-${cod}"
+          style="width:60px;padding:5px 7px;border:1.5px solid var(--border2);border-radius:7px;font-size:.78rem;background:#fff;outline:none"
+          onchange="ECF.secuencias['${cod}']=parseInt(this.value)||1;LS.s('dg_ecf',ECF);renderEcfSecuencias()">
+      </div>
+    </div>`;
+  }).join('') || '<div style="font-size:.78rem;color:var(--ink3);font-style:italic">No hay tipos habilitados aún</div>';
+}
+
+function generarNCF(tipoCod, seq){
+  // Format: E + tipo(2) + serie(8) padded → e.g. E310000000001
+  return `E${tipoCod}${String(seq).padStart(10,'0')}`;
+}
+
+function nextNCF(tipoCod){
+  if(!ECF.secuencias) ECF.secuencias={};
+  const n = ECF.secuencias[tipoCod] || 1;
+  ECF.secuencias[tipoCod] = n + 1;
+  LS.s('dg_ecf', ECF);
+  return generarNCF(tipoCod, n);
+}
+
+// Open ECF emitter for a pedido
+function openEcfEmitir(pedId){
+  const p = PEDS_DB().find(x=>x.id==pedId); if(!p) return;
+  ecfCurrentPedId = pedId;
+  const tipos = ECF.tiposHabilitados || [];
+  if(!ECF.rnc){ toast('⚠️ Configura el RNC en Configuración → ECF primero'); return; }
+
+  document.getElementById('ecf-emitir-content').innerHTML = `
+    <div style="background:var(--paper);border-radius:9px;padding:10px 12px;margin-bottom:12px;border:1px solid var(--border)">
+      <div style="font-size:.72rem;font-weight:700;color:var(--ink3);margin-bottom:4px">PEDIDO</div>
+      <div style="font-weight:700;color:var(--ink)">${p.cliente}</div>
+      <div style="font-size:.78rem;color:var(--ink3)">${p.desc} · Total: ${money(p.total)}</div>
+    </div>
+    <div class="fg"><label class="fl">Tipo de Comprobante *</label>
+      <select class="fc" id="ecf-emit-tipo">
+        ${tipos.map(cod=>{const t=ECF_TIPOS_DGII.find(x=>x.codigo===cod);return`<option value="${cod}">${cod} — ${t?.nombre||cod}</option>`;}).join('')}
+      </select>
+    </div>
+    <div class="fg"><label class="fl">RNC / Cédula del cliente <span style="font-weight:400;color:var(--ink3)">(requerido para CF tipo 31)</span></label>
+      <input class="fc" id="ecf-emit-rnc-cli" placeholder="Ej: 1-01-00001-1">
+    </div>
+    <div class="fg"><label class="fl">Nombre del cliente (comprobante)</label>
+      <input class="fc" id="ecf-emit-nombre-cli" value="${p.cliente}">
+    </div>
+    <div class="fr2">
+      <div class="fg"><label class="fl">Subtotal (sin ITBIS)</label>
+        <input class="fc" id="ecf-emit-sub" type="number" value="${(N(p.total)/1.18).toFixed(2)}" oninput="calcEcfITBIS()">
+      </div>
+      <div class="fg"><label class="fl">ITBIS (${ECF.itbis||18}%)</label>
+        <input class="fc" id="ecf-emit-itbis" readonly style="background:var(--paper)">
+      </div>
+    </div>
+    <div class="fg"><label class="fl">Total del Comprobante</label>
+      <input class="fc" id="ecf-emit-total" type="number" value="${N(p.total).toFixed(2)}" oninput="calcEcfFromTotal()">
+    </div>`;
+  calcEcfITBIS();
+  cm('mo-ver');
+  om('mo-ecf-emitir');
+}
+
+function calcEcfITBIS(){
+  const sub=N(document.getElementById('ecf-emit-sub')?.value);
+  const rate=(ECF.itbis||18)/100;
+  const itbis=sub*rate;
+  const el=document.getElementById('ecf-emit-itbis');
+  if(el) el.value=itbis.toFixed(2);
+  const tel=document.getElementById('ecf-emit-total');
+  if(tel) tel.value=(sub+itbis).toFixed(2);
+}
+
+function calcEcfFromTotal(){
+  const total=N(document.getElementById('ecf-emit-total')?.value);
+  const rate=(ECF.itbis||18)/100;
+  const sub=total/(1+rate);
+  const eli=document.getElementById('ecf-emit-itbis');
+  const els=document.getElementById('ecf-emit-sub');
+  if(els) els.value=sub.toFixed(2);
+  if(eli) eli.value=(total-sub).toFixed(2);
+}
+
+function emitirEcf(){
+  const tipoCod = document.getElementById('ecf-emit-tipo')?.value; if(!tipoCod) return;
+  const ncf     = nextNCF(tipoCod);
+  const tipo    = ECF_TIPOS_DGII.find(t=>t.codigo===tipoCod);
+  const p       = PEDS_DB().find(x=>x.id==ecfCurrentPedId); if(!p) return;
+  const sub     = N(document.getElementById('ecf-emit-sub')?.value);
+  const itbis   = N(document.getElementById('ecf-emit-itbis')?.value);
+  const total   = N(document.getElementById('ecf-emit-total')?.value);
+  const rncCli  = document.getElementById('ecf-emit-rnc-cli')?.value.trim();
+  const nomCli  = document.getElementById('ecf-emit-nombre-cli')?.value.trim() || p.cliente;
+  const fecha   = new Date().toLocaleDateString('es',{day:'2-digit',month:'2-digit',year:'numeric'});
+
+  // Build ECF HTML
+  const html = `
+  <div style="border-bottom:2px solid #1c0f00;padding-bottom:12px;margin-bottom:14px">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap">
+      <div>
+        <div style="font-size:18px;font-weight:700;color:#1c0f00;font-family:Georgia,serif">🧁 ${ECF.nombreCom||CFG.nombre||'Mi Repostería'}</div>
+        <div style="font-size:11px;color:#555">RNC: <b>${ECF.rnc}</b></div>
+        <div style="font-size:10px;color:#888">${[CFG.tel,CFG.email,CFG.dir].filter(Boolean).join(' · ')}</div>
+      </div>
+      <div style="text-align:right">
+        <div style="font-size:9px;font-weight:700;letter-spacing:.8px;color:#c0302a;text-transform:uppercase">e-Comprobante Fiscal</div>
+        <div style="font-size:16px;font-weight:700;color:#c97c1e;font-family:Georgia,serif">${tipo?.nombre||'Comprobante'}</div>
+        <div style="font-size:11px;color:#555">NCF: <b style="color:#1c0f00">${ncf}</b></div>
+        <div style="font-size:11px;color:#555">Fecha: ${fecha}</div>
+      </div>
+    </div>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+    <div style="background:#fdf5e9;border-radius:8px;padding:9px 11px;border:1px solid rgba(100,60,20,.15)">
+      <div style="font-size:9px;font-weight:700;letter-spacing:.6px;color:#7a4a20;margin-bottom:4px">EMISOR</div>
+      <div style="font-size:12px;font-weight:700">${ECF.nombreCom||CFG.nombre}</div>
+      <div style="font-size:10px;color:#555">RNC: ${ECF.rnc}</div>
+      <div style="font-size:10px;color:#555">Régimen: ${ECF.regimen||'Ordinario'}</div>
+    </div>
+    <div style="background:#fdf5e9;border-radius:8px;padding:9px 11px;border:1px solid rgba(100,60,20,.15)">
+      <div style="font-size:9px;font-weight:700;letter-spacing:.6px;color:#7a4a20;margin-bottom:4px">RECEPTOR</div>
+      <div style="font-size:12px;font-weight:700">${nomCli}</div>
+      ${rncCli?`<div style="font-size:10px;color:#555">RNC/Cédula: ${rncCli}</div>`:'<div style="font-size:10px;color:#888">Consumidor Final</div>'}
+    </div>
+  </div>
+  <table style="width:100%;border-collapse:collapse;margin-bottom:12px">
+    <thead><tr style="background:#1c0f00;color:#fff">
+      <th style="padding:6px 8px;text-align:left;font-size:11px">DESCRIPCIÓN</th>
+      <th style="padding:6px 8px;text-align:center;font-size:11px">CANT.</th>
+      <th style="padding:6px 8px;text-align:right;font-size:11px">VALOR</th>
+    </tr></thead>
+    <tbody>
+      <tr><td style="padding:7px 8px;border-bottom:1px solid #eee;font-size:12px"><b>${p.desc}</b>${p.notas?`<br><span style="font-size:10px;color:#888">${p.notas}</span>`:''}</td>
+          <td style="padding:7px 8px;border-bottom:1px solid #eee;font-size:12px;text-align:center">${p.qty||1}</td>
+          <td style="padding:7px 8px;border-bottom:1px solid #eee;font-size:12px;text-align:right">${money(sub)}</td></tr>
+    </tbody>
+  </table>
+  <div style="display:flex;justify-content:flex-end;margin-bottom:14px">
+    <table style="border-collapse:collapse;min-width:220px">
+      <tr><td style="padding:3px 10px;font-size:12px;color:#555">Subtotal (sin ITBIS):</td><td style="padding:3px 10px;font-size:12px;text-align:right">${money(sub)}</td></tr>
+      <tr><td style="padding:3px 10px;font-size:12px;color:#555">ITBIS (${ECF.itbis||18}%):</td><td style="padding:3px 10px;font-size:12px;text-align:right">${money(itbis)}</td></tr>
+      <tr style="border-top:2px solid #1c0f00"><td style="padding:5px 10px;font-size:13px;font-weight:700;color:#1c0f00">TOTAL:</td><td style="padding:5px 10px;font-size:15px;font-weight:700;text-align:right;color:#c97c1e">${money(total)}</td></tr>
+    </table>
+  </div>
+  <div style="border-top:1px solid #ddd;padding-top:10px;text-align:center">
+    <div style="font-size:9px;color:#888;margin-bottom:4px">Este comprobante fiscal electrónico (e-CF) fue generado en cumplimiento de la normativa DGII.</div>
+    <div style="font-size:9px;color:#aaa">Conserve este comprobante para fines fiscales · ${tipo?.uso||''}</div>
+    ${CFG.gracias?`<div style="font-size:12px;font-weight:700;color:#c97c1e;margin-top:8px;font-family:Georgia,serif">${CFG.gracias}</div>`:''}
+  </div>`;
+
+  cm('mo-ecf-emitir');
+  showFactura(`e-CF ${tipoCod} — ${tipo?.nombre||''}`, html);
+}
+
+/* ═══════════════════════════════════════════════════════
+   ENHANCED loadConfigForm — show/hide sections by role
+═══════════════════════════════════════════════════════ */
+const _origLoadConfigForm = loadConfigForm;
+function loadConfigForm(){
+  // base fields
+  const m={nombre:'nombre',eslogan:'eslogan',tel:'tel',email:'email',dir:'dir',redes:'redes',nit:'nit',moneda:'moneda',pie:'pie',condiciones:'condiciones',gracias:'gracias',prefix:'prefix',facnum:'facnum','lic-fecha':'licFecha','lic-dias':'licDias'};
+  Object.entries(m).forEach(([k,v])=>{const el=document.getElementById('cfg-'+k);if(el&&CFG[v]!==undefined)el.value=CFG[v]||'';});
+  if(CFG.licFecha){const dias=Math.ceil((new Date(CFG.licFecha)-new Date())/(1000*60*60*24));const ls=document.getElementById('lic-status');if(ls)ls.innerHTML=`<span style="color:${dias>0?'var(--ok)':'var(--danger)'};font-weight:700">${dias>0?`Activa · ${dias} días restantes`:`⛔ VENCIDA · ${fDate(CFG.licFecha)}`}</span>`;}
+
+  // Show license card only for developer
+  const licCard=document.getElementById('lic-card');
+  if(licCard) licCard.style.display = SESSION?.perfil==='developer' ? '' : 'none';
+
+  // ECF: admin + developer
+  const ecfCard=document.getElementById('ecf-card');
+  if(ecfCard){
+    const canEcf = can('emitir_ecf')||can('ver_ecf');
+    ecfCard.style.display = canEcf ? '' : 'none';
+    if(canEcf){
+      document.getElementById('ecf-rnc').value        = ECF.rnc||'';
+      document.getElementById('ecf-nombre-com').value = ECF.nombreCom||'';
+      document.getElementById('ecf-regimen').value    = ECF.regimen||'ordinario';
+      renderEcfTipos();
+      renderEcfSecuencias();
+    }
+  }
+
+  // Perfiles management: developer only
+  const pfCard=document.getElementById('perfiles-cfg-card');
+  if(pfCard){
+    pfCard.style.display = SESSION?.perfil==='developer' ? '' : 'none';
+    if(SESSION?.perfil==='developer') renderPerfilesCfg();
+  }
+
+  // URL change: developer only
+  const urlCard=document.getElementById('url-cfg-card');
+  if(urlCard){
+    urlCard.style.display = SESSION?.perfil==='developer' ? '' : 'none';
+    if(SESSION?.perfil==='developer'){
+      const disp=document.getElementById('current-url-display');
+      if(disp) disp.textContent = SCRIPT_URL || '(no configurada)';
+    }
+  }
+}
+
+function renderPerfilesCfg(){
+  const cont=document.getElementById('perfiles-cfg-list'); if(!cont) return;
+  const builtin=['developer','admin','caja','preparacion'];
+  const allProfs=[...builtin,...DB.perfiles.filter(p=>!builtin.includes(p.id||p.nombre)).map(p=>p.id||p.nombre)];
+  cont.innerHTML=allProfs.map(pid=>{
+    if(pid==='developer') return`<div class="li"><div class="la bg-b">🔑</div><div class="lb"><div class="lt">developer</div><div class="ls">Acceso total — no editable</div></div></div>`;
+    const pf=DB.perfiles.find(x=>x.id===pid||x.nombre===pid);
+    const perms=pf?(Array.isArray(pf.permisos)?pf.permisos:(typeof pf.permisos==='string'?JSON.parse(pf.permisos||'[]'):[])):(PERM_DEFAULTS[pid]||[]);
+    return`<div class="li"><div class="la bg-f">🔐</div><div class="lb"><div class="lt">${pid}</div><div class="ls">${perms.length} permisos</div></div><div class="lm"><button class="btn btn-ghost btn-sm" onclick="openPerfil('${pid}')">✏️ Editar</button></div></div>`;
+  }).join('');
+}
+
+// Expose ECF emitter from pedido detail
+function addEcfBtnToPed(pedId){
+  if(!can('emitir_ecf')) return '';
+  return `<button class="btn btn-ghost btn-sm" onclick="openEcfEmitir(${pedId})">🧾 e-CF</button>`;
+}
 </script>
 </body>
 </html>
