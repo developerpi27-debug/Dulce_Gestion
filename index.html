@@ -1268,20 +1268,62 @@ function openListo(id){
   const p=PEDS_DB().find(x=>x.id==id);if(!p)return;
   listoId=id;listoExtCnt=0;
   const ic=Array.isArray(p.ingsCalc)?p.ingsCalc:(typeof p.ingsCalc==='string'?JSON.parse(p.ingsCalc||'[]'):[]);
+  const ec=Array.isArray(p.extrasCreate)?p.extrasCreate:(typeof p.extrasCreate==='string'?JSON.parse(p.extrasCreate||'[]'):[]);
+
+  // ── Sección 1: Ingredientes de receta ──
   let html='';
-  if(!ic.length){html=`<div class="al al-info"><div class="al-i">ℹ️</div><div><div class="al-t">Sin receta vinculada</div><div class="al-s">Agrega manualmente los extras usados.</div></div></div>`;}
-  else{
-    html='<div style="font-size:.7rem;font-weight:700;color:var(--ink2);margin-bottom:6px">INGREDIENTES A DESCONTAR:</div>';
-    ic.forEach((u,i)=>{const ing=ING().find(x=>x.id==u.iid);const ok=ing&&ing.cant>=u.cant;
+  if(!ic.length){
+    html=`<div class="al al-info"><div class="al-i">ℹ️</div><div><div class="al-t">Sin receta vinculada</div><div class="al-s">Agrega manualmente los ingredientes usados en la sección de abajo.</div></div></div>`;
+  } else {
+    html='<div style="font-size:.7rem;font-weight:700;color:var(--ink2);margin-bottom:6px;letter-spacing:.2px">📋 INGREDIENTES DE RECETA</div>';
+    ic.forEach((u,i)=>{
+      const ing=ING().find(x=>x.id==u.iid);const ok=ing&&ing.cant>=u.cant;
       html+=`<div style="display:grid;grid-template-columns:1fr 78px 46px;gap:5px;align-items:center;margin-bottom:5px">
-        <div style="font-size:.8rem;font-weight:500;color:${ok?'var(--ink)':'var(--danger)'}">${ing?.nombre||'?'}${!ok?` ⚠️`:''}</div>
-        <input type="number" step="0.001" id="lc-${i}" value="${R(u.cant)}" style="padding:6px 8px;border:1.5px solid ${ok?'var(--border2)':'var(--danger)'};border-radius:8px;font-size:.8rem;background:var(--paper2);outline:none;">
-        <div style="font-size:.7rem;color:var(--ink3);text-align:center">${ing?.unidad||''}<br><span style="color:${ok?'var(--ok)':'var(--danger)'};font-size:.62rem">${ing?R(ing.cant):'?'}</span></div>
+        <div style="font-size:.8rem;font-weight:500;color:${ok?'var(--ink)':'var(--danger)'}">${ing?.nombre||'?'}${!ok?` ⚠️ stock:${R(ing?.cant??0)}`:''}</div>
+        <input type="number" step="0.001" id="lc-${i}" value="${R(u.cant)}"
+          style="padding:6px 8px;border:1.5px solid ${ok?'var(--border2)':'var(--danger)'};border-radius:8px;font-size:.8rem;background:var(--paper2);outline:none;">
+        <div style="font-size:.7rem;color:var(--ink3);text-align:center">${ing?.unidad||''}<br>
+          <span style="color:${ok?'var(--ok)':'var(--danger)'};font-size:.62rem">${ing?R(ing.cant):'?'}</span>
+        </div>
       </div>`;
     });
   }
   document.getElementById('listo-ings').innerHTML=html;
-  document.getElementById('listo-extras').innerHTML='';
+
+  // ── Sección 2: Pre-cargar extras del pedido ──
+  const extrasWrap=document.getElementById('listo-extras');
+  extrasWrap.innerHTML='';
+  if(ec.length){
+    const preHeader=document.createElement('div');
+    preHeader.innerHTML='<div style="font-size:.7rem;font-weight:700;color:var(--mauve);margin-bottom:5px;letter-spacing:.2px">➕ EXTRAS AGREGADOS AL CREAR EL PEDIDO (pre-cargados)</div>';
+    extrasWrap.appendChild(preHeader);
+    ec.forEach(u=>{
+      const ing=ING().find(i=>i.id==u.iid);if(!ing)return;
+      const ok=ing.cant>=u.cant;
+      const n=listoExtCnt++;
+      const div=document.createElement('div');div.id=`le-row-${n}`;
+      div.style.cssText='display:grid;grid-template-columns:1fr 78px 46px 28px;gap:5px;align-items:center;margin-bottom:5px;';
+      div.innerHTML=`
+        <div style="font-size:.8rem;font-weight:500;color:${ok?'var(--mauve)':'var(--danger)'}">
+          ${ing.nombre}${!ok?` ⚠️ stock:${R(ing.cant)}`:''}
+        </div>
+        <input type="number" step="0.001" id="le-c-${n}" value="${R(u.cant)}"
+          style="padding:6px 8px;border:1.5px solid ${ok?'var(--mauve)':'var(--danger)'};border-radius:8px;font-size:.8rem;background:var(--paper2);outline:none;">
+        <div style="font-size:.7rem;color:var(--ink3);text-align:center">${ing.unidad}<br>
+          <span style="color:${ok?'var(--ok)':'var(--danger)'};font-size:.62rem">${R(ing.cant)}</span>
+        </div>
+        <button onclick="document.getElementById('le-row-${n}').remove()"
+          style="background:rgba(192,48,42,.1);border:none;color:var(--danger);border-radius:8px;width:28px;height:30px;cursor:pointer;font-size:.82rem">✕</button>`;
+      // Store ingredient id in a data attribute for confirmListo to read
+      div.dataset.iid=ing.id;
+      extrasWrap.appendChild(div);
+    });
+    // Separator before free-add section
+    const sep=document.createElement('div');
+    sep.innerHTML='<div style="font-size:.7rem;font-weight:700;color:var(--ink3);margin:8px 0 5px;letter-spacing:.2px">➕ AGREGAR MÁS EXTRAS DE PRODUCCIÓN</div>';
+    extrasWrap.appendChild(sep);
+  }
+
   cm('mo-ver');om('mo-listo');
 }
 
@@ -1289,28 +1331,45 @@ function confirmListo(){
   const p=PEDS_DB().find(x=>x.id==listoId);if(!p)return;
   const ic=Array.isArray(p.ingsCalc)?p.ingsCalc:(typeof p.ingsCalc==='string'?JSON.parse(p.ingsCalc||'[]'):[]);
   const usados=[],movs=[];
+
+  // ── 1. Descuento de ingredientes de receta ──
   ic.forEach((u,i)=>{
     const el=document.getElementById(`lc-${i}`);const cant=el?N(el.value):u.cant;
     const ing=ING().find(x=>x.id==u.iid);if(!ing||!cant)return;
     ing.cant=Math.max(0,ing.cant-cant);
     usados.push({iid:ing.id,cant,tipo:'receta'});
-    movs.push({id:uid(),tipo:'salida',nombre:ing.nombre,cant,costo:0,notas:`Pedido #${p.id} - ${p.cliente}`,fecha:new Date().toISOString(),ref:String(p.id)});
+    movs.push({id:uid(),tipo:'salida',nombre:ing.nombre,cant,costo:0,notas:`Receta pedido #${p.id} - ${p.cliente}`,fecha:new Date().toISOString(),ref:String(p.id)});
     syncRow('inventario','update',ing,ing.id);
   });
+
+  // ── 2. Descuento de TODOS los extras visibles en listo-extras ──
+  // (incluye pre-cargados del extrasCreate + los añadidos manualmente)
   const extras=[];
   for(let n=0;n<listoExtCnt;n++){
-    const ie=document.getElementById(`le-i-${n}`);const ce=document.getElementById(`le-c-${n}`);
-    if(!ie||!ce)continue;const cant=N(ce.value);if(!cant)continue;
-    const ing=ING().find(i=>i.id==ie.value);if(!ing)continue;
+    // Row may have been deleted by user clicking ✕
+    const row=document.getElementById(`le-row-${n}`);if(!row)continue;
+    const ce=document.getElementById(`le-c-${n}`);if(!ce)continue;
+    const cant=N(ce.value);if(!cant)continue;
+    // Get ingredient id: first try data-iid (pre-loaded), then select element (manually added)
+    const ie=document.getElementById(`le-i-${n}`);
+    const iid=row.dataset.iid?parseInt(row.dataset.iid):(ie?parseInt(ie.value):0);
+    if(!iid)continue;
+    const ing=ING().find(i=>i.id==iid);if(!ing)continue;
     ing.cant=Math.max(0,ing.cant-cant);
     extras.push({iid:ing.id,cant,tipo:'extra-producción'});
-    movs.push({id:uid(),tipo:'salida',nombre:ing.nombre,cant,costo:0,notas:`Extra prod #${p.id}`,fecha:new Date().toISOString(),ref:String(p.id)});
+    movs.push({id:uid(),tipo:'salida',nombre:ing.nombre,cant,costo:0,notas:`Extra producción #${p.id} - ${p.cliente}`,fecha:new Date().toISOString(),ref:String(p.id)});
     syncRow('inventario','update',ing,ing.id);
   }
-  p.ingsUsados=usados;p.extrasProduccion=extras;p.estado='listo';p.updated=new Date().toISOString();
+
+  p.ingsUsados=usados;
+  p.extrasProduccion=extras;
+  p.estado='listo';
+  p.updated=new Date().toISOString();
   movs.forEach(m=>{DB.movimientos.push(m);syncRow('movimientos','write',m,m.id);});
   syncRow('pedidos','update',p,p.id);
-  cm('mo-listo');toast('✅ Inventario actualizado — Pedido listo');renderV(CUR);
+  cm('mo-listo');
+  toast(`✅ Inventario actualizado — ${usados.length+extras.length} ingrediente(s) descontado(s)`);
+  renderV(CUR);
 }
 
 /* ── ENTREGA ── */
@@ -1929,14 +1988,83 @@ function facClienteRow(p){return`<div style="background:#fdf5e9;border-radius:8p
 function facTabla(filas){return`<table style="width:100%;border-collapse:collapse;margin-bottom:12px"><thead><tr style="background:#1c0f00;color:#fff"><th style="padding:6px 8px;text-align:left;font-size:11px">DESCRIPCIÓN</th><th style="padding:6px 8px;text-align:center;font-size:11px">CANT.</th><th style="padding:6px 8px;text-align:right;font-size:11px">PRECIO</th><th style="padding:6px 8px;text-align:right;font-size:11px">SUBTOTAL</th></tr></thead><tbody>${filas.map(f=>`<tr><td style="padding:6px 8px;border-bottom:1px solid #eee;font-size:12px">${f.desc}</td><td style="padding:6px 8px;border-bottom:1px solid #eee;font-size:12px;text-align:center">${f.qty||1}</td><td style="padding:6px 8px;border-bottom:1px solid #eee;font-size:12px;text-align:right">${money(f.precio)}</td><td style="padding:6px 8px;border-bottom:1px solid #eee;font-size:12px;text-align:right;font-weight:700">${money(f.subtotal)}</td></tr>`).join('')}</tbody></table>`;}
 function facTotales(lineas){return`<div style="display:flex;justify-content:flex-end;margin-bottom:12px"><table style="border-collapse:collapse;min-width:200px">${lineas.map(l=>`<tr><td style="padding:3px 9px;font-size:12px;color:${l.highlight?'#1c0f00':'#555'};font-weight:${l.highlight?'700':'400'};border-top:${l.highlight?'2px solid #1c0f00':'none'}">${l.label}</td><td style="padding:3px 9px;font-size:${l.highlight?'14px':'12px'};text-align:right;font-weight:${l.highlight?'700':'400'};color:${l.color||'#1c0f00'};border-top:${l.highlight?'2px solid #1c0f00':'none'}">${l.valor}</td></tr>`).join('')}</table></div>`;}
 function facPie(notas){const pie=CFG.pie||'',cond=CFG.condiciones||'',grac=CFG.gracias||'';return`<div style="border-top:1px solid #ddd;padding-top:10px;margin-top:6px">${notas?`<div style="background:#fdf5e9;border-radius:6px;padding:7px 9px;margin-bottom:8px;border-left:3px solid #c97c1e"><span style="font-size:10px;font-weight:700;color:#7a4a20">NOTAS: </span><span style="font-size:11px;color:#333">${notas}</span></div>`:''} ${cond?`<div style="font-size:10px;color:#888;margin-bottom:3px">📋 ${cond}</div>`:''} ${pie?`<div style="font-size:10px;color:#888;margin-bottom:5px">${pie}</div>`:''} ${grac?`<div style="font-size:13px;font-weight:700;color:#c97c1e;text-align:center;margin-top:7px;font-family:Georgia,serif">${grac}</div>`:''}</div>`;}
+// ── Helper: build factura rows including extras ──
+function buildPedFilas(p){
+  const rec=p.recId?PRODS_DB().find(x=>x.id==p.recId):null;
+  const precioBase=rec?N(rec.precio)*N(p.qty):N(p.total);
+
+  // Collect all extras (create + produccion + entrega)
+  const ec=Array.isArray(p.extrasCreate)?p.extrasCreate:(typeof p.extrasCreate==='string'?JSON.parse(p.extrasCreate||'[]'):[]);
+  const ep=Array.isArray(p.extrasProduccion)?p.extrasProduccion:(typeof p.extrasProduccion==='string'?JSON.parse(p.extrasProduccion||'[]'):[]);
+  const ee=Array.isArray(p.extrasEntrega)?p.extrasEntrega:(typeof p.extrasEntrega==='string'?JSON.parse(p.extrasEntrega||'[]'):[]);
+  const allExtras=[...ec,...ep,...ee];
+
+  // Calculate extras cost
+  let costoExtras=0;
+  const extrasFilas=[];
+  allExtras.forEach(u=>{
+    const ing=ING().find(i=>i.id==u.iid);if(!ing)return;
+    const costo=ing.costo?ing.costo*u.cant:0;
+    costoExtras+=costo;
+    extrasFilas.push({
+      desc:`<span style="color:#7a4a20">➕ Extra:</span> ${ing.nombre} (${R(u.cant)} ${ing.unidad})`,
+      qty:1,
+      precio:costo,
+      subtotal:costo,
+      isExtra:true
+    });
+  });
+
+  const filas=[];
+  // Main product line
+  filas.push({
+    desc:`<b>${p.desc}</b>${p.notas?`<br><span style="font-size:10px;color:#888">Nota: ${p.notas}</span>`:''}`,
+    qty:p.qty,
+    precio:rec?N(rec.precio):precioBase/N(p.qty||1),
+    subtotal:precioBase
+  });
+  // Extra lines
+  filas.push(...extrasFilas);
+
+  return {filas, precioBase, costoExtras, total:N(p.total)};
+}
+
 function generarFacturaAnticipo(pedId){
-  const p=PEDS_DB().find(x=>x.id==pedId);if(!p)return;const num=nextFacNum(),fecha=new Date().toLocaleDateString('es',{day:'2-digit',month:'2-digit',year:'numeric'});
-  const html=facHeader('Recibo de Anticipo',num,fecha)+facClienteRow(p)+facTabla([{desc:`<b>${p.desc}</b>${p.notas?`<br><span style="font-size:10px;color:#888">Nota: ${p.notas}</span>`:''}`,qty:p.qty,precio:N(p.total)/N(p.qty),subtotal:p.total}])+facTotales([{label:'Precio total:',valor:money(p.total)},{label:'<span style="color:#c97c1e">✅ Anticipo recibido:</span>',valor:`<span style="color:#2a8040;font-weight:700">${money(p.anticipo)}</span>`},{label:'<b>Saldo contra entrega:</b>',valor:`<b style="color:#c0302a">${money(p.restante)}</b>`,highlight:true}])+facPie(p.notas);
+  const p=PEDS_DB().find(x=>x.id==pedId);if(!p)return;
+  const num=nextFacNum(),fecha=new Date().toLocaleDateString('es',{day:'2-digit',month:'2-digit',year:'numeric'});
+  const {filas,precioBase,costoExtras,total}=buildPedFilas(p);
+
+  const totLines=[
+    ...(costoExtras>0?[
+      {label:'Subtotal producto:',valor:money(precioBase)},
+      {label:'Extras / ingredientes adicionales:',valor:money(costoExtras)},
+      {label:'Precio total del pedido:',valor:money(total)}
+    ]:[
+      {label:'Precio total del pedido:',valor:money(total)}
+    ]),
+    {label:'<span style="color:#c97c1e">✅ Anticipo recibido:</span>',valor:`<span style="color:#2a8040;font-weight:700">${money(p.anticipo)}</span>`},
+    {label:'<b>Saldo contra entrega:</b>',valor:`<b style="color:#c0302a">${money(p.restante)}</b>`,highlight:true}
+  ];
+  const html=facHeader('Recibo de Anticipo',num,fecha)+facClienteRow(p)+facTabla(filas)+facTotales(totLines)+facPie(p.notas);
   showFactura('Recibo de Anticipo',html);
 }
+
 function generarFacturaFinal(pedId){
-  const p=PEDS_DB().find(x=>x.id==pedId);if(!p)return;const num=nextFacNum(),fecha=new Date().toLocaleDateString('es',{day:'2-digit',month:'2-digit',year:'numeric'});
-  const html=facHeader('Factura de Venta',num,fecha)+facClienteRow(p)+facTabla([{desc:`<b>${p.desc}</b>`,qty:p.qty,precio:N(p.total)/N(p.qty),subtotal:p.total}])+facTotales([{label:'Subtotal:',valor:money(p.total)},{label:'Anticipo pagado:',valor:`-${money(p.anticipo)}`},{label:'<b>TOTAL A PAGAR:</b>',valor:`<b>${money(p.restante)}</b>`,highlight:true,color:N(p.restante)===0?'#2a8040':'#c0302a'},...(N(p.restante)===0?[{label:'Estado:',valor:'<span style="color:#2a8040;font-weight:700">✅ PAGADO</span>'}]:[])  ])+facPie(p.notas);
+  const p=PEDS_DB().find(x=>x.id==pedId);if(!p)return;
+  const num=nextFacNum(),fecha=new Date().toLocaleDateString('es',{day:'2-digit',month:'2-digit',year:'numeric'});
+  const {filas,precioBase,costoExtras,total}=buildPedFilas(p);
+
+  const totLines=[
+    ...(costoExtras>0?[
+      {label:'Subtotal producto:',valor:money(precioBase)},
+      {label:'Extras / ingredientes adicionales:',valor:money(costoExtras)},
+    ]:[]),
+    {label:'Subtotal:',valor:money(total)},
+    {label:'Anticipo pagado:',valor:`-${money(p.anticipo)}`},
+    {label:'<b>TOTAL A PAGAR:</b>',valor:`<b>${money(p.restante)}</b>`,highlight:true,color:N(p.restante)===0?'#2a8040':'#c0302a'},
+    ...(N(p.restante)===0?[{label:'Estado:',valor:'<span style="color:#2a8040;font-weight:700">✅ PAGADO COMPLETO</span>'}]:[])
+  ];
+  const html=facHeader('Factura de Venta',num,fecha)+facClienteRow(p)+facTabla(filas)+facTotales(totLines)+facPie(p.notas);
   showFactura('Factura de Venta',html);
 }
 function generarFacturaCotizacion(cotId){
@@ -1949,8 +2077,21 @@ function generarFacturaCotizacion(cotId){
   showFactura('Cotización',html);
 }
 function generarReciboCobro(pedId,monto,metodo){
-  const p=PEDS_DB().find(x=>x.id==pedId);if(!p)return;const num=nextFacNum(),fecha=new Date().toLocaleDateString('es',{day:'2-digit',month:'2-digit',year:'numeric'});
-  const html=facHeader('Recibo de Pago',num,fecha)+facClienteRow(p)+`<div style="text-align:center;padding:16px 0;background:#fdf5e9;border-radius:10px;margin-bottom:12px;border:2px solid rgba(100,60,20,.15)"><div style="font-size:11px;color:#7a4a20;font-weight:700;letter-spacing:.6px;margin-bottom:3px">MONTO RECIBIDO</div><div style="font-size:30px;font-weight:700;color:#2a8040;font-family:Georgia,serif">${money(monto)}</div><div style="font-size:11px;color:#555;margin-top:3px">Método: ${metodo||'Efectivo'}</div></div>`+facTotales([{label:'Total del pedido:',valor:money(p.total)},{label:'Este pago:',valor:money(monto)},{label:'<b>Saldo restante:</b>',valor:`<b style="color:${Math.max(0,N(p.restante)-monto)<=0?'#2a8040':'#c0302a'}">${money(Math.max(0,N(p.restante)-monto))}</b>`,highlight:true}])+facPie(p.notas);
+  const p=PEDS_DB().find(x=>x.id==pedId);if(!p)return;
+  const num=nextFacNum(),fecha=new Date().toLocaleDateString('es',{day:'2-digit',month:'2-digit',year:'numeric'});
+  const {filas,costoExtras}=buildPedFilas(p);
+  const html=facHeader('Recibo de Pago',num,fecha)+facClienteRow(p)+
+    facTabla(filas)+
+    `<div style="text-align:center;padding:14px 0;background:#fdf5e9;border-radius:10px;margin-bottom:12px;border:2px solid rgba(100,60,20,.15)">
+      <div style="font-size:11px;color:#7a4a20;font-weight:700;letter-spacing:.6px;margin-bottom:3px">MONTO RECIBIDO</div>
+      <div style="font-size:28px;font-weight:700;color:#2a8040;font-family:Georgia,serif">${money(monto)}</div>
+      <div style="font-size:11px;color:#555;margin-top:3px">Método: ${metodo||'Efectivo'}</div>
+    </div>`+
+    facTotales([
+      {label:'Total del pedido:',valor:money(p.total)},
+      {label:'Este pago:',valor:money(monto)},
+      {label:'<b>Saldo restante:</b>',valor:`<b style="color:${Math.max(0,N(p.restante)-monto)<=0?'#2a8040':'#c0302a'}">${money(Math.max(0,N(p.restante)-monto))}</b>`,highlight:true}
+    ])+facPie(p.notas);
   showFactura('Recibo de Pago',html);
 }
 function showFactura(tipo,html){document.getElementById('fac-titulo').textContent='🖨 '+tipo;document.getElementById('factura-preview').innerHTML=html;document.getElementById('fac-share-btn').style.display=navigator.share?'':'none';cm('mo-ver');cm('mo-cobro');om('mo-factura');}
