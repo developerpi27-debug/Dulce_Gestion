@@ -330,7 +330,17 @@ select.fc{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
       <div class="tabs" id="tabs-ped">
         <button class="tab on" onclick="tabP('activos',this)">Activos</button>
         <button class="tab" onclick="tabP('hoy',this)">Hoy</button>
-        <button class="tab" onclick="tabP('todos',this)">Historial</button>
+        <button class="tab" onclick="tabP('todos',this)">Todos</button>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+        <select class="fc" id="ped-estado-filter" onchange="renderPeds(pedTab)" style="font-size:.76rem;padding:6px 10px;max-width:180px">
+          <option value="">Todos los estados</option>
+          <option value="pendiente">⏳ Pendiente</option>
+          <option value="en_proceso">🔥 En proceso</option>
+          <option value="listo">✅ Listo</option>
+          <option value="entregado">📦 Entregado</option>
+          <option value="cancelado">❌ Cancelado</option>
+        </select>
       </div>
       <div id="ped-list"></div>
     </div>
@@ -640,7 +650,10 @@ select.fc{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
     <div class="fg"><label class="fl">Stock Mínimo</label><input class="fc" id="i-min" type="number" step="0.001" placeholder="0"></div>
     <div class="fg"><label class="fl">Stock Máximo</label><input class="fc" id="i-max" type="number" step="0.001" placeholder="0"></div>
   </div>
-  <div class="fg"><label class="fl">Costo por unidad ($)</label><input class="fc" id="i-costo" type="number" step="0.001" placeholder="0.000"></div>
+  <div class="fr2">
+    <div class="fg"><label class="fl">Costo por unidad ($) <span style="font-weight:400;color:var(--ink3)">para márgenes</span></label><input class="fc" id="i-costo" type="number" step="0.001" placeholder="0.000"></div>
+    <div class="fg"><label class="fl">Precio de venta ($) <span style="font-weight:400;color:var(--ink3)">para extras</span></label><input class="fc" id="i-pventa" type="number" step="0.001" placeholder="0.000"></div>
+  </div>
   <input type="hidden" id="i-edit-id">
   <button class="btn btn-amber btn-block" onclick="saveIng()">💾 Guardar</button>
 </div></div>
@@ -839,8 +852,16 @@ async function loadAllData() {
       DB[sheet] = (rows||[]).map(row=>{
         const obj={};
         for(const[k,v] of Object.entries(row)){
-          if(typeof v==='string'&&(v.startsWith('[')||v.startsWith('{'))){try{obj[k]=JSON.parse(v);}catch{obj[k]=v;}}
-          else obj[k]=v;
+          if(typeof v==='string'&&(v.startsWith('[')||v.startsWith('{'))){
+            try{
+              const p1=JSON.parse(v);
+              // handle double-stringified JSON ("[{...}]" stored as string)
+              obj[k]=(typeof p1==='string')?JSON.parse(p1):p1;
+            }catch{obj[k]=v;}
+          } else {
+            // Normalize hora field: Sheets may return time as decimal fraction
+            obj[k]=v;
+          }
         }
         return obj;
       });
@@ -933,7 +954,11 @@ function showLogin(){
 function checkLicBanner(){
   const alert = document.getElementById('lic-alert-login');
   if(!CFG.licFecha){ alert.style.display='none'; return; }
-  const dias = Math.ceil((new Date(CFG.licFecha)-new Date())/(1000*60*60*24));
+  const licRaw=CFG.licFecha;
+  let licDateStr=licRaw;
+  if(typeof licRaw==='number') licDateStr=new Date(Math.round((licRaw-25569)*86400*1000)).toISOString().slice(0,10);
+  else if(licRaw&&licRaw.includes('/')) {const[d,m,y]=licRaw.split('/');licDateStr=`${y}-${m}-${d}`;}
+  const dias = Math.ceil((new Date(licDateStr)-new Date())/(1000*60*60*24));
   if(dias<=0){
     alert.className='al al-dgr'; alert.style.display='flex';
     document.getElementById('lic-alert-title').textContent='⛔ Licencia vencida';
@@ -1101,7 +1126,25 @@ function setMsg(id,msg,color){const el=document.getElementById(id);if(el){el.tex
 const today=()=>new Date().toISOString().slice(0,10);
 const N=v=>parseFloat(v)||0;
 const R=v=>{const n=N(v);return n%1===0?n:parseFloat(n.toFixed(3));};
-const fDate=s=>{if(!s)return'';const[y,m,d]=s.split('-');return`${d}/${m}/${y}`;};
+const fDate=s=>{if(!s)return'';try{const str=String(s).trim();if(/^\d{4}-\d{2}-\d{2}/.test(str)){const[y,m,d]=str.split('-');return`${d}/${m}/${y}`;}if(/^\d{2}\/\d{2}\/\d{4}/.test(str))return str;const d=new Date(str);if(!isNaN(d))return d.toLocaleDateString('es',{day:'2-digit',month:'2-digit',year:'numeric'});}catch{}return String(s).slice(0,10);};
+
+function normHora(v){
+  if(!v&&v!==0) return '';
+  // Sheets decimal fraction (0.625 = 15:00)
+  if(typeof v==='number'||(!isNaN(parseFloat(v))&&!String(v).includes(':'))){
+    const frac=parseFloat(v)%1;
+    const totalMin=Math.round(frac*24*60);
+    const hh=Math.floor(totalMin/60);
+    const mm=totalMin%60;
+    return `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}`;
+  }
+  const s=String(v).trim();
+  // HH:MM:SS → HH:MM
+  if(/^\d{1,2}:\d{2}(:\d{2})?$/.test(s)) return s.slice(0,5);
+  // ISO datetime → extract time
+  if(s.includes('T')){try{const d=new Date(s);return`${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;}catch{}}
+  return s.slice(0,5);
+}
 const money=v=>CUR_SYM()+N(v).toLocaleString('es',{minimumFractionDigits:2,maximumFractionDigits:2});
 const CUR_SYM=()=>CFG.moneda||'Q';
 const uid=()=>Date.now()+Math.floor(Math.random()*9999);
@@ -1185,7 +1228,10 @@ function renderInicio(){
   // License banner in app
   const banner=document.getElementById('lic-banner-app');
   if(CFG.licFecha){
-    const dias=Math.ceil((new Date(CFG.licFecha)-new Date())/(1000*60*60*24));
+    let _licStr=CFG.licFecha;
+    if(typeof _licStr==='number')_licStr=new Date(Math.round((_licStr-25569)*86400*1000)).toISOString().slice(0,10);
+    else if(_licStr&&_licStr.includes('/')) {const[_d,_m,_y]=_licStr.split('/');_licStr=`${_y}-${_m}-${_d}`;}
+    const dias=Math.ceil((new Date(_licStr)-new Date())/(1000*60*60*24));
     if(dias<=0) banner.innerHTML=`<div class="lic-banner"><span style="font-size:1.2rem">⛔</span><div><b>Licencia vencida</b><br><span style="font-size:.76rem">Contacta al proveedor para renovar el acceso.</span></div></div>`;
     else if(dias<=(CFG.licDias||7)) banner.innerHTML=`<div class="lic-banner warn"><span style="font-size:1.2rem">⚠️</span><div><b>Licencia vence en ${dias} día(s)</b><br><span style="font-size:.76rem">Fecha: ${fDate(CFG.licFecha)}. Contacta al proveedor.</span></div></div>`;
     else banner.innerHTML='';
@@ -1198,13 +1244,16 @@ function renderInicio(){
   const urg=urgentes().slice(0,2);
   let html='';
   sc.forEach(i=>html+=alHTML('al-dgr','📦',`Stock crítico: ${i.nombre}`,`${R(i.cant)} ${i.unidad} — mín: ${i.min}`));
-  urg.forEach(p=>html+=alHTML('al-wrn','⏰',`Entrega: ${p.cliente}`,`${p.desc} · ${fDate(p.fecha)} ${p.hora}`));
+  urg.forEach(p=>html+=alHTML('al-wrn','⏰',`Entrega: ${p.cliente}`,`${p.desc} · ${fDate(p.fecha)} ${normHora(p.hora)}`));
   if(!html) html=alHTML('al-ok','✅','Todo en orden','Sin alertas críticas');
   al.innerHTML=html;
 
-  const tot=ING().filter(i=>i.cant<=i.min).length+urgentes().length;
+  const _nStock=ING().filter(i=>i.cant<=i.min).length;
+  const _nUrg=urgentes().length;
+  const _nCobrar=PEDS_DB().filter(p=>N(p.restante)>0&&p.estado!=='cancelado').length;
+  const tot=_nStock+_nUrg+_nCobrar;
   const nb=document.getElementById('nbadge');
-  nb.textContent=tot;nb.style.display=tot?'':'none';
+  if(nb){nb.textContent=tot||'';nb.style.display=tot?'':'none';}
 }
 
 const ING=()=>DB.inventario;
@@ -1222,6 +1271,9 @@ function renderPeds(tab){
   if(tab==='activos') list=pnorm.filter(p=>p.estado!=='cancelado'&&p.estado!=='entregado'&&p.fecha>=h).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
   else if(tab==='hoy') list=pnorm.filter(p=>p.fecha===h&&p.estado!=='cancelado');
   else list=[...pnorm].sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
+  // Apply status filter
+  const estadoFilt=document.getElementById('ped-estado-filter')?.value||'';
+  if(estadoFilt) list=list.filter(p=>p.estado===estadoFilt);
   const cont=document.getElementById('ped-list');
   if(!list.length){cont.innerHTML=emptyHTML('📭','Sin pedidos aquí');return;}
   const IC={pendiente:'⏳',en_proceso:'🔥',listo:'✅',entregado:'📦',cancelado:'❌'};
@@ -1543,7 +1595,8 @@ function recalcTotal(){
     const cant=N(ce.value); if(!cant) continue;
     const ing=ING().find(i=>i.id==ie.value);
     if(ing&&ing.costo){
-      const costo=ing.costo*cant;
+      const pv2=ing.precioVenta||ing.costo||0;
+      const costo=pv2*cant;
       costoExtras+=costo;
       extrasDetalle.push(`${ing.nombre} × ${R(cant)} ${ing.unidad} = ${money(costo)}`);
     }
@@ -1559,7 +1612,7 @@ function recalcTotal(){
   if(bd){
     if(prod&&qty>1||costoExtras>0){
       let lines=[];
-      if(prod) lines.push(`${qty} × ${prod.nombre} = ${money(base)}`);
+      if(prod) lines.push(`${qty} × ${prod.nombre} = ${money(base)} (${money(N(prod.precio))}/u)`);
       extrasDetalle.forEach(e=>lines.push(`Extra: ${e}`));
       if(costoExtras>0) lines.push(`<b>Total: ${money(total)}</b>`);
       bd.innerHTML=lines.join('<br>');
@@ -1667,7 +1720,7 @@ function renderStock(){
     html+=`<div class="ibr"><div style="font-size:1rem">${ic}</div><div class="ibr-body">
       <div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:.82rem;font-weight:700">${i.nombre}</span><span style="font-size:.82rem;font-weight:700;color:var(--amber)">${R(i.cant)} <span style="font-size:.66rem;color:var(--ink3)">${i.unidad}</span></span></div>
       <div class="ibr-bg"><div class="ibr-fill fill-${s}" style="width:${pct}%"></div></div>
-      <div style="font-size:.62rem;color:var(--ink3);margin-top:2px">Mín: ${i.min} · Máx: ${i.max} ${i.unidad}${i.costo?` · $${i.costo}/${i.unidad}`:''}</div>
+      <div style="font-size:.62rem;color:var(--ink3);margin-top:2px">Mín: ${i.min} · Máx: ${i.max} ${i.unidad}${i.costo?` · Costo:$${i.costo}`:''} ${i.precioVenta?`· Venta:$${i.precioVenta}`:''}</div>
     </div>${can('editar_inventario')?`<button onclick="openIng(${i.id})" style="background:none;border:none;color:var(--amber);cursor:pointer;font-size:.9rem;padding:3px">✏️</button>`:''}</div>`;
   });
   html+=`</div>`;cont.innerHTML=html;
@@ -1675,13 +1728,13 @@ function renderStock(){
 function openIng(id){
   const i=id?ING().find(x=>x.id==id):null;document.getElementById('ing-titulo').textContent=i?'Editar Ingrediente':'Nuevo Ingrediente';document.getElementById('i-edit-id').value=id||'';
   document.getElementById('i-nombre').value=i?.nombre||'';document.getElementById('i-cant').value=i?.cant||'';document.getElementById('i-unidad').value=i?.unidad||'kg';
-  document.getElementById('i-min').value=i?.min||'';document.getElementById('i-max').value=i?.max||'';document.getElementById('i-costo').value=i?.costo||'';
+  document.getElementById('i-min').value=i?.min||'';document.getElementById('i-max').value=i?.max||'';document.getElementById('i-costo').value=i?.costo||'';document.getElementById('i-pventa').value=i?.precioVenta||'';
   om('mo-ing');
 }
 function saveIng(){
   const nombre=document.getElementById('i-nombre').value.trim();if(!nombre){toast('❌ Ingresa un nombre');return;}
   const eid=parseInt(document.getElementById('i-edit-id').value)||0;
-  const data={nombre,cant:N(document.getElementById('i-cant').value),unidad:document.getElementById('i-unidad').value,min:N(document.getElementById('i-min').value),max:N(document.getElementById('i-max').value)||100,costo:N(document.getElementById('i-costo').value),updated:new Date().toISOString()};
+  const data={nombre,cant:N(document.getElementById('i-cant').value),unidad:document.getElementById('i-unidad').value,min:N(document.getElementById('i-min').value),max:N(document.getElementById('i-max').value)||100,costo:N(document.getElementById('i-costo').value),precioVenta:N(document.getElementById('i-pventa').value),updated:new Date().toISOString()};
   if(eid){const i=ING().find(x=>x.id==eid);if(i){Object.assign(i,data);syncRow('inventario','update',i,i.id);}}
   else{const i={id:uid(),...data};DB.inventario.push(i);syncRow('inventario','write',i,i.id);}
   cm('mo-ing');toast('✅ Guardado');renderStock();
@@ -1937,8 +1990,8 @@ function renderAlertas(){
   html+=`<div class="shd" style="margin-top:7px"><h3>⏰ Entregas Urgentes</h3></div>`;
   const ph=PEDS_DB().filter(p=>p.fecha===h&&p.estado!=='cancelado'&&p.estado!=='entregado'),pm2=PEDS_DB().filter(p=>p.fecha===man&&p.estado!=='cancelado'&&p.estado!=='entregado');
   if(!ph.length&&!pm2.length)html+=alHTML('al-ok','✅','Sin urgentes','No hay pendientes hoy ni mañana');
-  ph.forEach(p=>html+=alHTML('al-dgr','🔴',`HOY ${p.hora}h — ${p.cliente}`,`${p.desc} · ${p.estado}`));
-  pm2.forEach(p=>html+=alHTML('al-wrn','🟡',`Mañana ${p.hora}h — ${p.cliente}`,`${p.desc} · ${p.estado}`));
+  ph.forEach(p=>html+=alHTML('al-dgr','🔴',`HOY ${normHora(p.hora)}h — ${p.cliente}`,`${p.desc} · ${p.estado}`));
+  pm2.forEach(p=>html+=alHTML('al-wrn','🟡',`Mañana ${normHora(p.hora)}h — ${p.cliente}`,`${p.desc} · ${p.estado}`));
   html+=`<div class="shd" style="margin-top:7px"><h3>💰 Cobros Pendientes</h3></div>`;
   const pc=PEDS_DB().filter(p=>N(p.restante)>0&&p.estado!=='cancelado');
   if(!pc.length)html+=alHTML('al-ok','💚','Sin cobros pendientes','Todo al corriente');
@@ -2077,28 +2130,68 @@ function facHeader(tipo,num,fecha){
   const contact=[CFG.tel,CFG.email,CFG.dir,CFG.redes].filter(Boolean).join('  ·  ');if(contact)lines.push(`<div style="font-size:10px;color:#666;margin-top:1px">${contact}</div>`);
   return`<div style="border-bottom:2px solid #1c0f00;padding-bottom:12px;margin-bottom:14px"><div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;flex-wrap:wrap"><div><div style="font-size:19px;font-weight:700;color:#1c0f00;font-family:Georgia,serif">🧁 ${neg}</div>${lines.join('')}</div><div style="text-align:right;flex-shrink:0"><div style="font-size:17px;font-weight:700;color:#c97c1e;font-family:Georgia,serif">${tipo.toUpperCase()}</div><div style="font-size:11px;color:#555">N° <b>${num}</b></div><div style="font-size:11px;color:#555">Fecha: ${fecha}</div></div></div></div>`;
 }
-function facClienteRow(p){return`<div style="background:#fdf5e9;border-radius:8px;padding:9px 11px;margin-bottom:12px;border:1px solid rgba(100,60,20,.15)"><div style="font-size:10px;font-weight:700;letter-spacing:.6px;color:#7a4a20;margin-bottom:4px">DATOS DEL CLIENTE</div><div style="font-size:13px;font-weight:700;color:#1c0f00">${p.cliente}</div>${p.telefono?`<div style="font-size:11px;color:#555">📞 ${p.telefono}</div>`:''}<div style="font-size:11px;color:#555;margin-top:2px">📅 Entrega: <b>${fDate(p.fecha)}</b> a las <b>${p.hora}h</b></div></div>`;}
-function facTabla(filas){return`<table style="width:100%;border-collapse:collapse;margin-bottom:12px"><thead><tr style="background:#1c0f00;color:#fff"><th style="padding:6px 8px;text-align:left;font-size:11px">DESCRIPCIÓN</th><th style="padding:6px 8px;text-align:center;font-size:11px">CANT.</th><th style="padding:6px 8px;text-align:right;font-size:11px">PRECIO</th><th style="padding:6px 8px;text-align:right;font-size:11px">SUBTOTAL</th></tr></thead><tbody>${filas.map(f=>`<tr><td style="padding:6px 8px;border-bottom:1px solid #eee;font-size:12px">${f.desc}</td><td style="padding:6px 8px;border-bottom:1px solid #eee;font-size:12px;text-align:center">${f.qty||1}</td><td style="padding:6px 8px;border-bottom:1px solid #eee;font-size:12px;text-align:right">${money(f.precio)}</td><td style="padding:6px 8px;border-bottom:1px solid #eee;font-size:12px;text-align:right;font-weight:700">${money(f.subtotal)}</td></tr>`).join('')}</tbody></table>`;}
+function facClienteRow(p){return`<div style="background:#fdf5e9;border-radius:8px;padding:9px 11px;margin-bottom:12px;border:1px solid rgba(100,60,20,.15)"><div style="font-size:10px;font-weight:700;letter-spacing:.6px;color:#7a4a20;margin-bottom:4px">DATOS DEL CLIENTE</div><div style="font-size:13px;font-weight:700;color:#1c0f00">${p.cliente}</div>${p.telefono?`<div style="font-size:11px;color:#555">📞 ${p.telefono}</div>`:''}<div style="font-size:11px;color:#555;margin-top:2px">📅 Entrega: <b>${fDate(p.fecha)}</b> a las <b>${normHora(p.hora)}h</b></div></div>`;}
+function facTabla(filas){
+  return`<table style="width:100%;border-collapse:collapse;margin-bottom:12px">
+    <thead><tr style="background:#1c0f00;color:#fff">
+      <th style="padding:6px 8px;text-align:left;font-size:11px;border-radius:4px 0 0 0">DESCRIPCIÓN</th>
+      <th style="padding:6px 8px;text-align:center;font-size:11px">CANT.</th>
+      <th style="padding:6px 8px;text-align:right;font-size:11px">P.UNIT</th>
+      <th style="padding:6px 8px;text-align:right;font-size:11px;border-radius:0 4px 0 0">SUBTOTAL</th>
+    </tr></thead>
+    <tbody>${filas.map(f=>`<tr>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;font-size:12px">${f.desc}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;font-size:12px;text-align:center">${f.qty}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;font-size:12px;text-align:right">${N(f.precio)>0?money(f.precio):'—'}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;font-size:12px;text-align:right;font-weight:700">${N(f.subtotal)>0?money(f.subtotal):'—'}</td>
+    </tr>`).join('')}</tbody>
+  </table>`;
+}
 function facTotales(lineas){return`<div style="display:flex;justify-content:flex-end;margin-bottom:12px"><table style="border-collapse:collapse;min-width:200px">${lineas.map(l=>`<tr><td style="padding:3px 9px;font-size:12px;color:${l.highlight?'#1c0f00':'#555'};font-weight:${l.highlight?'700':'400'};border-top:${l.highlight?'2px solid #1c0f00':'none'}">${l.label}</td><td style="padding:3px 9px;font-size:${l.highlight?'14px':'12px'};text-align:right;font-weight:${l.highlight?'700':'400'};color:${l.color||'#1c0f00'};border-top:${l.highlight?'2px solid #1c0f00':'none'}">${l.valor}</td></tr>`).join('')}</table></div>`;}
 function facPie(notas){const pie=CFG.pie||'',cond=CFG.condiciones||'',grac=CFG.gracias||'';return`<div style="border-top:1px solid #ddd;padding-top:10px;margin-top:6px">${notas?`<div style="background:#fdf5e9;border-radius:6px;padding:7px 9px;margin-bottom:8px;border-left:3px solid #c97c1e"><span style="font-size:10px;font-weight:700;color:#7a4a20">NOTAS: </span><span style="font-size:11px;color:#333">${notas}</span></div>`:''} ${cond?`<div style="font-size:10px;color:#888;margin-bottom:3px">📋 ${cond}</div>`:''} ${pie?`<div style="font-size:10px;color:#888;margin-bottom:5px">${pie}</div>`:''} ${grac?`<div style="font-size:13px;font-weight:700;color:#c97c1e;text-align:center;margin-top:7px;font-family:Georgia,serif">${grac}</div>`:''}</div>`;}
 // ── Helper: build factura rows including extras ──
 function buildPedFilas(p){
-  const parseA=v=>Array.isArray(v)?v:(typeof v==='string'?JSON.parse(v||'[]'):[]);
+  const parseA=v=>{
+    if(!v) return [];
+    if(Array.isArray(v)) return v;
+    if(typeof v==='string'){
+      try{
+        const p=JSON.parse(v);
+        // double-stringified: '["[{..."]' → parse again
+        if(typeof p==='string') return JSON.parse(p);
+        return Array.isArray(p)?p:[];
+      }catch{return [];}
+    }
+    return [];
+  };
   const rec=p.recId?PRODS_DB().find(x=>x.id==p.recId):null;
 
-  // Calculate base price
+  // Calculate base price (product × qty)
   const qty=N(p.qty)||1;
   const precioUnit=rec?N(rec.precio):N(p.total)/qty;
   const precioBase=precioUnit*qty;
 
-  // Collect ALL extras (create + produccion + entrega)
-  const allExtras=[...parseA(p.extrasCreate),...parseA(p.extrasProduccion),...parseA(p.extrasEntrega)];
+  // ── Extras para la factura ──
+  // Priority: use extrasCreate (agreed at order time) as the billing source.
+  // extrasProduccion may overlap with extrasCreate (pre-loaded) — avoid double counting.
+  // Only add extrasProduccion items that have NO matching iid in extrasCreate.
+  const eC=parseA(p.extrasCreate);
+  const eP=parseA(p.extrasProduccion);
+  const eE=parseA(p.extrasEntrega);
 
-  // Deduplicate by iid (sum quantities for same ingredient)
+  const ecIds=new Set(eC.map(u=>String(u.iid)));
+
+  // extrasProduccion items only if NOT already in extrasCreate
+  const ePNew=eP.filter(u=>!ecIds.has(String(u.iid)));
+
+  // All billable extras: extrasCreate + new production extras + delivery extras
+  const billableExtras=[...eC,...ePNew,...eE];
+
+  // Group by iid to avoid any remaining duplicates
   const extMap={};
-  allExtras.forEach(u=>{
-    const key=u.iid;
-    if(!extMap[key]) extMap[key]={...u,cant:0};
+  billableExtras.forEach(u=>{
+    const key=String(u.iid);
+    if(!extMap[key]) extMap[key]={iid:u.iid,cant:0};
     extMap[key].cant+=N(u.cant);
   });
 
@@ -2107,13 +2200,14 @@ function buildPedFilas(p){
   Object.values(extMap).forEach(u=>{
     const ing=ING().find(i=>i.id==u.iid);
     if(!ing||!u.cant) return;
-    const costo=ing.costo?ing.costo*u.cant:0;
+    const pventa=ing.precioVenta||ing.costo||0;  // use precioVenta for billing, fallback to costo
+    const costo=pventa?N(pventa)*N(u.cant):0;
     costoExtras+=costo;
     extrasFilas.push({
-      desc:`➕ <b style="color:#7a4a20">${ing.nombre}</b> (${R(u.cant)} ${ing.unidad})`,
-      qty:1,
-      precio:costo,
-      subtotal:costo
+      desc:`➕ <b style="color:#7a4a20">${ing.nombre}</b>`,
+      qty: `${R(u.cant)} ${ing.unidad}`,
+      precio: pventa||0,
+      subtotal: costo
     });
   });
 
@@ -2126,8 +2220,10 @@ function buildPedFilas(p){
   });
   filas.push(...extrasFilas);
 
-  const total=N(p.total);
-  return {filas, precioBase, costoExtras, total};
+  // Total on invoice = precioBase + costoExtras (NOT p.total which may include markup)
+  // But if p.total was already set with extras included, use that
+  const totalFactura=N(p.total);
+  return {filas, precioBase, costoExtras, total:totalFactura};
 }
 
 function generarFacturaAnticipo(pedId){
@@ -2564,9 +2660,19 @@ function renderPerfilesCfg(){
 }
 
 // Expose ECF emitter from pedido detail
+function abrirEcfOConfig(pedId){
+  if(ECF&&ECF.rnc){
+    cm('mo-ver');
+    openEcfEmitir(pedId);
+  } else {
+    cm('mo-ver');
+    toast('⚠️ Primero configura el RNC en Configuración → ECF');
+    setTimeout(()=>sv('config'),600);
+  }
+}
 function addEcfBtnToPed(pedId){
   if(!can('emitir_ecf')) return '';
-  return `<button class="btn btn-ghost btn-sm" onclick="openEcfEmitir(${pedId})">🧾 e-CF</button>`;
+  return `<button class="btn btn-ghost btn-sm" onclick="abrirEcfOConfig(${pedId})">🧾 ${ECF&&ECF.rnc?'e-CF DGII':'Config ECF'}</button>`;
 }
 </script>
 </body>
