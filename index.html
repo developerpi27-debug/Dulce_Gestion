@@ -924,25 +924,30 @@ function hashPass(p){
 function showLogin(){
   document.getElementById('login-screen').classList.add('on');
   document.getElementById('login-negocio').textContent = CFG.nombre || 'DulceGestión';
+  // Reload CFG from Sheets config rows if available
+  const cfgRows=DB.config||[];
+  cfgRows.forEach(r=>{ if(r.key&&r.value!==null&&r.value!==undefined) CFG[r.key]=r.value; });
   checkLicBanner();
 }
 
 function checkLicBanner(){
-  if(!CFG.licFecha) return;
-  const dias = Math.ceil((new Date(CFG.licFecha)-new Date())/(1000*60*60*24));
   const alert = document.getElementById('lic-alert-login');
+  if(!CFG.licFecha){ alert.style.display='none'; return; }
+  const dias = Math.ceil((new Date(CFG.licFecha)-new Date())/(1000*60*60*24));
   if(dias<=0){
     alert.className='al al-dgr'; alert.style.display='flex';
     document.getElementById('lic-alert-title').textContent='⛔ Licencia vencida';
-    document.getElementById('lic-alert-msg').textContent='El sistema ha vencido. Contacta al proveedor para renovar.';
-  } else if(dias<=(CFG.licDias||7)){
+    document.getElementById('lic-alert-msg').textContent='El sistema ha vencido. Solo el Developer puede acceder. Contacta al proveedor.';
+  } else if(dias<=(parseInt(CFG.licDias)||7)){
     alert.className='al al-wrn'; alert.style.display='flex';
-    document.getElementById('lic-alert-title').textContent='⚠️ Licencia por vencer';
-    document.getElementById('lic-alert-msg').textContent=`Tu licencia vence en ${dias} días (${fDate(CFG.licFecha)}). Contacta al proveedor.`;
+    document.getElementById('lic-alert-title').textContent=`⚠️ Licencia vence en ${dias} día(s)`;
+    document.getElementById('lic-alert-msg').textContent=`Fecha de vencimiento: ${fDate(CFG.licFecha)}. Contacta al proveedor para renovar.`;
   } else {
     alert.style.display='none';
   }
 }
+
+
 
 function isLicExpired(){
   if(!CFG.licFecha) return false;
@@ -997,6 +1002,13 @@ function logout(){
   SESSION=null; LS.s('dg_session',null);
   document.getElementById('app').classList.remove('on');
   cm('mo-usermenu');
+  // Reset login form
+  const btn=document.getElementById('login-btn');
+  if(btn){btn.textContent='Ingresar';btn.disabled=false;}
+  const err=document.getElementById('login-err');
+  if(err) err.textContent='';
+  document.getElementById('l-user').value='';
+  document.getElementById('l-pass').value='';
   showLogin();
 }
 
@@ -1026,7 +1038,12 @@ function bootApp(){
   if(SESSION.perfil==='developer') document.getElementById('lic-card').style.display='';
 
   loadConfig();
-  sv('inicio');
+  // Navigate to first view the user has access to
+  const firstView = NAV_ITEMS_ALL.find(item=>{
+    if(item.perm==='__developer') return SESSION.perfil==='developer';
+    return can(item.perm);
+  });
+  sv(firstView ? firstView.id : 'alertas');
 }
 
 function buildNav(){
@@ -1134,9 +1151,27 @@ function changePass(){
 /* ═══════════════════════════════════════════════════════
    INICIO
 ═══════════════════════════════════════════════════════ */
+function normFecha(v){
+  // Normalize fecha to YYYY-MM-DD regardless of how Sheets returned it
+  if(!v) return '';
+  if(typeof v==='number'){
+    // Google Sheets serial date
+    const d=new Date(Math.round((v-25569)*86400*1000));
+    return d.toISOString().slice(0,10);
+  }
+  const s=String(v).trim();
+  // Already YYYY-MM-DD
+  if(/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0,10);
+  // DD/MM/YYYY
+  if(/^\d{2}\/\d{2}\/\d{4}/.test(s)){const[d,m,y]=s.split('/');return`${y}-${m}-${d}`;}
+  // M/D/YYYY or similar
+  try{const d=new Date(s);if(!isNaN(d)) return d.toISOString().slice(0,10);}catch{}
+  return s.slice(0,10);
+}
+
 function renderInicio(){
   const h=today(),mes=h.slice(0,7);
-  const peds=DB.pedidos;
+  const peds=DB.pedidos.map(p=>({...p,fecha:normFecha(p.fecha)}));
   const pedHoy=peds.filter(p=>p.fecha===h&&p.estado!=='cancelado');
   const activos=peds.filter(p=>p.estado!=='cancelado'&&p.estado!=='entregado'&&p.fecha>=h).length;
   const vHoy=pedHoy.filter(p=>p.estado==='entregado').reduce((s,p)=>s+N(p.total),0);
@@ -1183,9 +1218,10 @@ let pedTab='activos';
 function tabP(t,el){pedTab=t;document.querySelectorAll('#tabs-ped .tab').forEach(x=>x.classList.remove('on'));el.classList.add('on');renderPeds(t);}
 function renderPeds(tab){
   const h=today();let list=[];
-  if(tab==='activos') list=PEDS_DB().filter(p=>p.estado!=='cancelado'&&p.estado!=='entregado'&&p.fecha>=h).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
-  else if(tab==='hoy') list=PEDS_DB().filter(p=>p.fecha===h&&p.estado!=='cancelado');
-  else list=[...PEDS_DB()].sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
+  const pnorm=PEDS_DB().map(p=>({...p,fecha:normFecha(p.fecha)}));
+  if(tab==='activos') list=pnorm.filter(p=>p.estado!=='cancelado'&&p.estado!=='entregado'&&p.fecha>=h).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+  else if(tab==='hoy') list=pnorm.filter(p=>p.fecha===h&&p.estado!=='cancelado');
+  else list=[...pnorm].sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
   const cont=document.getElementById('ped-list');
   if(!list.length){cont.innerHTML=emptyHTML('📭','Sin pedidos aquí');return;}
   const IC={pendiente:'⏳',en_proceso:'🔥',listo:'✅',entregado:'📦',cancelado:'❌'};
@@ -1203,15 +1239,50 @@ function verPed(id){
   const p=PEDS_DB().find(x=>x.id==id);if(!p)return;
   const ES={pendiente:'⏳ Pendiente',en_proceso:'🔥 En proceso',listo:'✅ Listo',entregado:'📦 Entregado',cancelado:'❌ Cancelado'};
   const BA={pendiente:'b-pend',en_proceso:'b-proc',listo:'b-list',entregado:'b-entr',cancelado:'b-canc'};
-  const iU=Array.isArray(p.ingsUsados)?p.ingsUsados:(typeof p.ingsUsados==='string'?JSON.parse(p.ingsUsados||'[]'):[]);
-  const eP=Array.isArray(p.extrasProduccion)?p.extrasProduccion:(typeof p.extrasProduccion==='string'?JSON.parse(p.extrasProduccion||'[]'):[]);
-  const eE=Array.isArray(p.extrasEntrega)?p.extrasEntrega:(typeof p.extrasEntrega==='string'?JSON.parse(p.extrasEntrega||'[]'):[]);
-  let ingsH='';
-  if(iU.length){ ingsH='<div style="font-size:.7rem;font-weight:700;color:var(--ink2);margin-bottom:5px">🧂 INGREDIENTES DESCONTADOS</div>'+iU.map(u=>{const i=ING().find(x=>x.id==u.iid);return`<div class="ic-row"><span class="ic-name">${i?.nombre||'?'}</span><span class="ic-qty">${R(u.cant)}</span><span class="ic-unit">${i?.unidad||''}</span></div>`;}).join(''); }
-  const allExtras=[...eP,...eE];
-  if(allExtras.length){ ingsH+=`<div style="font-size:.7rem;font-weight:700;color:var(--mauve);margin:7px 0 4px">➕ EXTRAS</div>`+allExtras.map(u=>{const i=ING().find(x=>x.id==u.iid);return`<div class="ic-row" style="background:rgba(124,74,106,.06)"><span class="ic-name">${i?.nombre||'?'}</span><span class="ic-qty" style="color:var(--mauve)">${R(u.cant)}</span><span class="ic-unit">${i?.unidad||''} ${u.tipo?`<span style="font-size:.62rem;color:var(--ink3)">${u.tipo}</span>`:''}</span></div>`;}).join('');}
-  if(!ingsH) ingsH=`<div style="font-size:.78rem;color:var(--ink3);font-style:italic">Sin ingredientes registrados</div>`;
+  // Parse all ingredient arrays safely
+  const parseArr=v=>Array.isArray(v)?v:(typeof v==='string'?JSON.parse(v||'[]'):[]);
+  const iC=parseArr(p.ingsCalc);       // from recipe × qty
+  const iU=parseArr(p.ingsUsados);     // actually used (after marcar listo)
+  const eC=parseArr(p.extrasCreate);   // extras added when creating pedido
+  const eP=parseArr(p.extrasProduccion);
+  const eE=parseArr(p.extrasEntrega);
   const prod=p.recId?PRODS_DB().find(x=>x.id==p.recId):null;
+
+  let ingsH='';
+
+  // ── Sección A: Ingredientes de receta (planificados) ──
+  const ingsSrc=iU.length?iU:iC; // show used if already produced, else planned
+  if(ingsSrc.length){
+    const label=iU.length?'🧂 INGREDIENTES USADOS (producción)':'📋 INGREDIENTES PLANIFICADOS (receta)';
+    const color=iU.length?'var(--ink2)':'var(--blue2)';
+    ingsH+=`<div style="font-size:.7rem;font-weight:700;color:${color};margin-bottom:5px;letter-spacing:.2px">${label}</div>`;
+    ingsH+=ingsSrc.map(u=>{
+      const i=ING().find(x=>x.id==u.iid);
+      return`<div class="ic-row"><span class="ic-name">${i?.nombre||u.nombre||'?'}</span><span class="ic-qty">${R(u.cant)}</span><span class="ic-unit">${i?.unidad||''}</span></div>`;
+    }).join('');
+  }
+
+  // ── Sección B: Extras al crear el pedido ──
+  if(eC.length){
+    ingsH+=`<div style="font-size:.7rem;font-weight:700;color:var(--mauve);margin:7px 0 4px;letter-spacing:.2px">➕ EXTRAS DEL PEDIDO (al crear)</div>`;
+    ingsH+=eC.map(u=>{
+      const i=ING().find(x=>x.id==u.iid);
+      const costo=i?.costo?money(i.costo*u.cant):'';
+      return`<div class="ic-row" style="background:rgba(124,74,106,.06)"><span class="ic-name">${i?.nombre||'?'}</span><span class="ic-qty" style="color:var(--mauve)">${R(u.cant)}</span><span class="ic-unit">${i?.unidad||''}</span>${costo?`<span style="font-size:.68rem;font-weight:700;color:var(--amber)">${costo}</span>`:''}</div>`;
+    }).join('');
+  }
+
+  // ── Sección C: Extras de producción y entrega ──
+  const allExtras=[...eP,...eE];
+  if(allExtras.length){
+    ingsH+=`<div style="font-size:.7rem;font-weight:700;color:var(--sage);margin:7px 0 4px;letter-spacing:.2px">➕ EXTRAS ADICIONALES (producción/entrega)</div>`;
+    ingsH+=allExtras.map(u=>{
+      const i=ING().find(x=>x.id==u.iid);
+      return`<div class="ic-row" style="background:rgba(74,124,90,.06)"><span class="ic-name">${i?.nombre||'?'}</span><span class="ic-qty" style="color:var(--sage)">${R(u.cant)}</span><span class="ic-unit">${i?.unidad||''}</span><span style="font-size:.62rem;color:var(--ink3)">${u.tipo||''}</span></div>`;
+    }).join('');
+  }
+
+  if(!ingsH) ingsH=`<div style="font-size:.78rem;color:var(--ink3);font-style:italic;padding:4px 0">Sin ingredientes registrados aún</div>`;
   document.getElementById('ver-content').innerHTML=`
     <div class="card" style="margin-bottom:9px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:7px;flex-wrap:wrap;gap:5px">
@@ -1248,7 +1319,7 @@ function verPed(id){
       <div style="display:flex;gap:6px;flex-wrap:wrap">
         <button class="btn btn-ghost btn-sm" onclick="generarFacturaAnticipo(${p.id})">📄 Recibo Anticipo</button>
         <button class="btn btn-ghost btn-sm" onclick="generarFacturaFinal(${p.id})">🧾 Factura Completa</button>
-        ${ECF&&ECF.rnc&&can('emitir_ecf')?`<button class="btn btn-ghost btn-sm" onclick="openEcfEmitir(${p.id})">🧾 e-CF DGII</button>`:''}
+        ${(can('emitir_ecf')||can('ver_ecf'))?`<button class="btn btn-ghost btn-sm" onclick="ECF&&ECF.rnc?openEcfEmitir(${p.id}):sv('config')" title="${ECF&&ECF.rnc?'Emitir comprobante fiscal':'Configura el RNC en Configuración → ECF'}">🧾 ${ECF&&ECF.rnc?'e-CF DGII':'Config ECF'}</button>`:''}
       </div>
     </div>`:''}`;
   cm('mo-listo');cm('mo-entrega');
@@ -1713,11 +1784,33 @@ function pedDesdeRec(id){resetPedForm();document.getElementById('f-rec').value=i
 ═══════════════════════════════════════════════════════ */
 let cotCnt=0;
 function openCot(){cotCnt=0;['c-cli','c-ev','c-notas'].forEach(id=>{document.getElementById(id).value='';});document.getElementById('c-desc').value='0';document.getElementById('c-valid').value='7';document.getElementById('cot-items').innerHTML='';document.getElementById('cot-total-v').textContent='$0.00';addCotItem();om('mo-cot');}
-function addCotItem(){const n=cotCnt++;const d=document.createElement('div');d.style.cssText='display:grid;grid-template-columns:1fr 88px 26px;gap:5px;margin-bottom:5px;';d.innerHTML=`<input class="fc" id="ci-p-${n}" placeholder="Producto" style="font-size:.8rem;padding:7px 9px"><input class="fc" type="number" id="ci-v-${n}" placeholder="$" oninput="calcCotT()" style="font-size:.8rem;padding:7px 9px"><button onclick="this.parentElement.remove();calcCotT()" style="background:rgba(192,48,42,.1);border:none;color:var(--danger);border-radius:8px;cursor:pointer;font-size:.82rem">✕</button>`;document.getElementById('cot-items').appendChild(d);}
-function calcCotT(){let t=0;for(let n=0;n<cotCnt;n++){const v=document.getElementById(`ci-v-${n}`);if(v)t+=N(v.value);}const d=N(document.getElementById('c-desc').value)||0;const f=t*(1-d/100);document.getElementById('cot-total-v').textContent='$'+f.toLocaleString('es',{minimumFractionDigits:2});return f;}
+function addCotItem(){
+  const n=cotCnt++;
+  const d=document.createElement('div');
+  d.style.cssText='display:grid;grid-template-columns:1fr 52px 80px 26px;gap:5px;margin-bottom:5px;';
+  d.innerHTML=`
+    <input class="fc" id="ci-p-${n}" placeholder="Producto / servicio" style="font-size:.78rem;padding:6px 8px">
+    <input class="fc" type="number" id="ci-q-${n}" placeholder="Cant" value="1" min="1" oninput="calcCotT()" style="font-size:.78rem;padding:6px 8px;text-align:center">
+    <input class="fc" type="number" id="ci-v-${n}" placeholder="Precio $" oninput="calcCotT()" style="font-size:.78rem;padding:6px 8px">
+    <button onclick="this.parentElement.remove();calcCotT()" style="background:rgba(192,48,42,.1);border:none;color:var(--danger);border-radius:8px;cursor:pointer;font-size:.82rem">✕</button>`;
+  document.getElementById('cot-items').appendChild(d);
+}
+function calcCotT(){
+  let t=0;
+  for(let n=0;n<cotCnt;n++){
+    const v=document.getElementById(`ci-v-${n}`);
+    const q=document.getElementById(`ci-q-${n}`);
+    if(v&&q) t+=N(v.value)*Math.max(1,parseInt(q.value)||1);
+    else if(v) t+=N(v.value);
+  }
+  const d=N(document.getElementById('c-desc').value)||0;
+  const f=t*(1-d/100);
+  document.getElementById('cot-total-v').textContent='$'+f.toLocaleString('es',{minimumFractionDigits:2});
+  return f;
+}
 function saveCot(){
   const cli=document.getElementById('c-cli').value.trim();if(!cli){toast('❌ Ingresa el nombre del cliente');return;}
-  const items=[];for(let n=0;n<cotCnt;n++){const p=document.getElementById(`ci-p-${n}`);const v=document.getElementById(`ci-v-${n}`);if(p&&v&&p.value&&v.value)items.push({prod:p.value,precio:N(v.value)});}
+  const items=[];for(let n=0;n<cotCnt;n++){const p=document.getElementById(`ci-p-${n}`);const v=document.getElementById(`ci-v-${n}`);const q=document.getElementById(`ci-q-${n}`);if(p&&v&&p.value&&v.value){const qty=Math.max(1,parseInt(q?.value)||1);items.push({prod:p.value,qty,precio:N(v.value)*qty,precioUnit:N(v.value)});}}
   const d=N(document.getElementById('c-desc').value)||0,total=items.reduce((s,i)=>s+i.precio,0)*(1-d/100);
   const c={id:uid(),cliente:cli,evento:document.getElementById('c-ev').value,items,descuento:d,total,valida:parseInt(document.getElementById('c-valid').value)||7,notas:document.getElementById('c-notas').value,fecha:today(),estado:'vigente'};
   DB.cotizaciones.push(c);syncRow('cotizaciones','write',c,c.id);
@@ -1732,7 +1825,7 @@ function renderCots(){
         <div><div style="font-family:Georgia,serif;font-size:.97rem">${c.cliente}</div><div style="font-size:.68rem;color:var(--ink3)">${c.evento||'Sin evento'} · ${fDate(c.fecha)} · válida ${c.valida}d</div></div>
         <div style="font-family:Georgia,serif;font-size:1.05rem;color:var(--amber)">${money(c.total)}</div>
       </div>
-      ${(Array.isArray(c.items)?c.items:(typeof c.items==='string'?JSON.parse(c.items||'[]'):[])).map(i=>`<div style="display:flex;justify-content:space-between;font-size:.8rem;padding:3px 0;border-bottom:1px solid var(--border)"><span>${i.prod}</span><span style="font-weight:700">${money(i.precio)}</span></div>`).join('')}
+      ${(Array.isArray(c.items)?c.items:(typeof c.items==='string'?JSON.parse(c.items||'[]'):[])).map(i=>`<div style="display:flex;justify-content:space-between;font-size:.8rem;padding:3px 0;border-bottom:1px solid var(--border)"><span>${i.qty&&i.qty>1?`${i.qty} × `:''} ${i.prod}</span><span style="font-weight:700">${money(i.precio)}</span></div>`).join('')}
       ${c.descuento?`<div style="font-size:.7rem;color:var(--ink3);text-align:right;margin-top:3px">Descuento: ${c.descuento}%</div>`:''}
       ${c.notas?`<div style="font-size:.72rem;color:var(--ink2);margin-top:6px;background:var(--paper);padding:6px 9px;border-radius:7px">${c.notas}</div>`:''}
       <div style="display:flex;gap:6px;margin-top:9px;flex-wrap:wrap">
@@ -1818,7 +1911,7 @@ function renderCal(){
   const y=calDate.getFullYear(),m=calDate.getMonth();
   document.getElementById('cal-title').textContent=calDate.toLocaleDateString('es',{month:'long',year:'numeric'});
   const DN=['Do','Lu','Ma','Mi','Ju','Vi','Sá'],first=new Date(y,m,1).getDay(),dim=new Date(y,m+1,0).getDate(),h=today();
-  const pd=new Set(PEDS_DB().filter(p=>p.estado!=='cancelado').map(p=>p.fecha));
+  const pd=new Set(PEDS_DB().filter(p=>p.estado!=='cancelado').map(p=>normFecha(p.fecha)));
   let html=DN.map(d=>`<div style="text-align:center;font-size:.57rem;font-weight:700;color:var(--ink3);text-transform:uppercase;padding:2px 0">${d}</div>`).join('');
   for(let i=0;i<first;i++)html+=`<div></div>`;
   for(let d=1;d<=dim;d++){const ds=`${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`,isT=ds===h,hasO=pd.has(ds);
@@ -1826,7 +1919,7 @@ function renderCal(){
   document.getElementById('cal-grid').innerHTML=html;document.getElementById('cal-detail').innerHTML='';
 }
 function calDay(ds){
-  const ps=PEDS_DB().filter(p=>p.fecha===ds&&p.estado!=='cancelado');const det=document.getElementById('cal-detail');
+  const ps=PEDS_DB().map(p=>({...p,fecha:normFecha(p.fecha)})).filter(p=>p.fecha===ds&&p.estado!=='cancelado');const det=document.getElementById('cal-detail');
   if(!ps.length){det.innerHTML=`<div class="card"><div style="text-align:center;padding:7px;font-size:.81rem;color:var(--ink3)">Sin pedidos el ${fDate(ds)}</div></div>`;return;}
   det.innerHTML=`<div class="shd"><h3>📦 ${fDate(ds)}</h3><span style="font-size:.72rem;color:var(--ink3)">${ps.length} pedido(s)</span></div>`+ps.map(p=>`<div class="card" style="margin-bottom:8px;cursor:pointer" onclick="verPed(${p.id})"><div style="font-weight:700;color:var(--ink)">${p.cliente} · ${p.hora}h</div><div style="font-size:.76rem;color:var(--ink2);margin-top:2px">${p.desc}</div><div style="font-size:.71rem;color:var(--amber);margin-top:2px">${money(p.total)}${N(p.restante)>0?` · Restante: ${money(p.restante)}`:' · ✅ Pagado'}</div></div>`).join('');
 }
@@ -1990,43 +2083,51 @@ function facTotales(lineas){return`<div style="display:flex;justify-content:flex
 function facPie(notas){const pie=CFG.pie||'',cond=CFG.condiciones||'',grac=CFG.gracias||'';return`<div style="border-top:1px solid #ddd;padding-top:10px;margin-top:6px">${notas?`<div style="background:#fdf5e9;border-radius:6px;padding:7px 9px;margin-bottom:8px;border-left:3px solid #c97c1e"><span style="font-size:10px;font-weight:700;color:#7a4a20">NOTAS: </span><span style="font-size:11px;color:#333">${notas}</span></div>`:''} ${cond?`<div style="font-size:10px;color:#888;margin-bottom:3px">📋 ${cond}</div>`:''} ${pie?`<div style="font-size:10px;color:#888;margin-bottom:5px">${pie}</div>`:''} ${grac?`<div style="font-size:13px;font-weight:700;color:#c97c1e;text-align:center;margin-top:7px;font-family:Georgia,serif">${grac}</div>`:''}</div>`;}
 // ── Helper: build factura rows including extras ──
 function buildPedFilas(p){
+  const parseA=v=>Array.isArray(v)?v:(typeof v==='string'?JSON.parse(v||'[]'):[]);
   const rec=p.recId?PRODS_DB().find(x=>x.id==p.recId):null;
-  const precioBase=rec?N(rec.precio)*N(p.qty):N(p.total);
 
-  // Collect all extras (create + produccion + entrega)
-  const ec=Array.isArray(p.extrasCreate)?p.extrasCreate:(typeof p.extrasCreate==='string'?JSON.parse(p.extrasCreate||'[]'):[]);
-  const ep=Array.isArray(p.extrasProduccion)?p.extrasProduccion:(typeof p.extrasProduccion==='string'?JSON.parse(p.extrasProduccion||'[]'):[]);
-  const ee=Array.isArray(p.extrasEntrega)?p.extrasEntrega:(typeof p.extrasEntrega==='string'?JSON.parse(p.extrasEntrega||'[]'):[]);
-  const allExtras=[...ec,...ep,...ee];
+  // Calculate base price
+  const qty=N(p.qty)||1;
+  const precioUnit=rec?N(rec.precio):N(p.total)/qty;
+  const precioBase=precioUnit*qty;
 
-  // Calculate extras cost
+  // Collect ALL extras (create + produccion + entrega)
+  const allExtras=[...parseA(p.extrasCreate),...parseA(p.extrasProduccion),...parseA(p.extrasEntrega)];
+
+  // Deduplicate by iid (sum quantities for same ingredient)
+  const extMap={};
+  allExtras.forEach(u=>{
+    const key=u.iid;
+    if(!extMap[key]) extMap[key]={...u,cant:0};
+    extMap[key].cant+=N(u.cant);
+  });
+
   let costoExtras=0;
   const extrasFilas=[];
-  allExtras.forEach(u=>{
-    const ing=ING().find(i=>i.id==u.iid);if(!ing)return;
+  Object.values(extMap).forEach(u=>{
+    const ing=ING().find(i=>i.id==u.iid);
+    if(!ing||!u.cant) return;
     const costo=ing.costo?ing.costo*u.cant:0;
     costoExtras+=costo;
     extrasFilas.push({
-      desc:`<span style="color:#7a4a20">➕ Extra:</span> ${ing.nombre} (${R(u.cant)} ${ing.unidad})`,
+      desc:`➕ <b style="color:#7a4a20">${ing.nombre}</b> (${R(u.cant)} ${ing.unidad})`,
       qty:1,
       precio:costo,
-      subtotal:costo,
-      isExtra:true
+      subtotal:costo
     });
   });
 
   const filas=[];
-  // Main product line
   filas.push({
     desc:`<b>${p.desc}</b>${p.notas?`<br><span style="font-size:10px;color:#888">Nota: ${p.notas}</span>`:''}`,
-    qty:p.qty,
-    precio:rec?N(rec.precio):precioBase/N(p.qty||1),
+    qty,
+    precio:precioUnit,
     subtotal:precioBase
   });
-  // Extra lines
   filas.push(...extrasFilas);
 
-  return {filas, precioBase, costoExtras, total:N(p.total)};
+  const total=N(p.total);
+  return {filas, precioBase, costoExtras, total};
 }
 
 function generarFacturaAnticipo(pedId){
@@ -2073,7 +2174,7 @@ function generarFacturaCotizacion(cotId){
   const items=Array.isArray(c.items)?c.items:(typeof c.items==='string'?JSON.parse(c.items||'[]'):[]);
   const subtotal=items.reduce((s,i)=>s+N(i.precio),0),desc=c.descuento||0,total=subtotal*(1-desc/100);
   const cliente=`<div style="background:#fdf5e9;border-radius:8px;padding:9px 11px;margin-bottom:12px;border:1px solid rgba(100,60,20,.15)"><div style="font-size:10px;font-weight:700;letter-spacing:.6px;color:#7a4a20;margin-bottom:4px">CLIENTE</div><div style="font-size:13px;font-weight:700">${c.cliente}</div>${c.evento?`<div style="font-size:11px;color:#555">Evento: <b>${c.evento}</b></div>`:''}<div style="font-size:11px;color:#888;margin-top:2px">Válida hasta: <b>${vence}</b></div></div>`;
-  const html=facHeader('Cotización',num,fecha)+cliente+facTabla(items.map(i=>({desc:i.prod,qty:1,precio:i.precio,subtotal:i.precio})))+facTotales([{label:'Subtotal:',valor:money(subtotal)},...(desc?[{label:`Descuento (${desc}%):`,valor:`-${money(subtotal*desc/100)}`}]:[]),{label:'<b>TOTAL ESTIMADO:</b>',valor:`<b>${money(total)}</b>`,highlight:true}])+facPie(c.notas);
+  const html=facHeader('Cotización',num,fecha)+cliente+facTabla(items.map(i=>({desc:i.prod,qty:i.qty||1,precio:i.precioUnit||i.precio,subtotal:i.precio})))+facTotales([{label:'Subtotal:',valor:money(subtotal)},...(desc?[{label:`Descuento (${desc}%):`,valor:`-${money(subtotal*desc/100)}`}]:[]),{label:'<b>TOTAL ESTIMADO:</b>',valor:`<b>${money(total)}</b>`,highlight:true}])+facPie(c.notas);
   showFactura('Cotización',html);
 }
 function generarReciboCobro(pedId,monto,metodo){
@@ -2106,7 +2207,7 @@ function shareFactura(){const txt=document.getElementById('factura-preview').inn
 /* ═══════════════════════════════════════════════════════
    HELPERS
 ═══════════════════════════════════════════════════════ */
-function urgentes(){const h=today(),man=new Date(Date.now()+86400000).toISOString().slice(0,10);return PEDS_DB().filter(p=>(p.fecha===h||p.fecha===man)&&p.estado!=='cancelado'&&p.estado!=='entregado');}
+function urgentes(){const h=today(),man=new Date(Date.now()+86400000).toISOString().slice(0,10);return PEDS_DB().map(p=>({...p,fecha:normFecha(p.fecha)})).filter(p=>(p.fecha===h||p.fecha===man)&&p.estado!=='cancelado'&&p.estado!=='entregado');}
 function todayCard(p){
   const ES={pendiente:'⏳ Pendiente',en_proceso:'🔥 En proceso',listo:'✅ Listo',entregado:'📦 Entregado'};
   const tE=p.estado==='listo'?`<span class="tag tag-c">${ES[p.estado]}</span>`:p.estado==='en_proceso'?`<span class="tag tag-a">${ES[p.estado]}</span>`:`<span class="tag">${ES[p.estado]||p.estado}</span>`;
