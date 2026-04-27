@@ -497,6 +497,33 @@ select.fc{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
       </div>
     </div>
 
+
+    <!-- ══════════ VENTAS / CAJA ══════════ -->
+    <div class="vw" id="vw-ventas">
+      <div class="shd"><h3>🛒 Punto de Venta</h3>
+        <button class="btn btn-amber btn-sm" onclick="abrirNuevaVenta()">+ Nueva Venta</button>
+      </div>
+      <div class="tabs" id="tabs-venta">
+        <button class="tab on" onclick="tabVenta('activa',this)">Venta Activa</button>
+        <button class="tab" onclick="tabVenta('historial',this)">Historial</button>
+      </div>
+      <div id="ventas-content"></div>
+    </div>
+
+    <!-- ══════════ SOLICITUDES ══════════ -->
+    <div class="vw" id="vw-solicitudes">
+      <div class="shd"><h3>📨 Solicitudes de Clientes</h3>
+        <select class="fc" id="sol-filtro" onchange="renderSolicitudes()" style="font-size:.76rem;padding:6px 10px;max-width:160px">
+          <option value="">Todas</option>
+          <option value="nueva">Nuevas</option>
+          <option value="revisada">Revisadas</option>
+          <option value="aceptada">Aceptadas</option>
+          <option value="rechazada">Rechazadas</option>
+        </select>
+      </div>
+      <div id="solicitudes-list"></div>
+    </div>
+
   </div></div><!-- /scroll /content -->
 
   <nav id="nav">
@@ -779,12 +806,17 @@ const ALL_PERMS = [
   {id:'emitir_ecf',       label:'Emitir Comprobantes ECF'},
   {id:'gestionar_perfiles',label:'Gestionar Perfiles'},
   {id:'cambiar_url',      label:'Cambiar URL Google Sheet'},
+  {id:'ver_ventas',        label:'Ver Ventas / Caja'},
+  {id:'crear_ventas',      label:'Crear Ventas / Cobrar'},
+  {id:'ver_solicitudes',   label:'Ver Solicitudes Clientes'},
+  {id:'gestionar_solicitudes', label:'Gestionar Solicitudes'},
+  {id:'config_limite',     label:'Config Límite Pedidos/Día'},
 ];
 
 const PERM_DEFAULTS = {
   developer: ALL_PERMS.map(p=>p.id), // all
-  admin: ALL_PERMS.filter(p=>!['ver_config','editar_config','gestionar_perfiles','cambiar_url'].includes(p.id)).map(p=>p.id).concat(['ver_ecf','emitir_ecf']),
-  caja: ['ver_inicio','ver_pedidos','crear_pedidos','editar_pedidos','cancelar_pedidos','cobrar','imprimir','ver_cotizaciones','crear_cotizaciones','ver_calendario','ver_alertas'],
+  admin: ALL_PERMS.filter(p=>!['gestionar_perfiles','cambiar_url'].includes(p.id)).map(p=>p.id),
+  caja: ['ver_inicio','ver_pedidos','crear_pedidos','editar_pedidos','cancelar_pedidos','cobrar','imprimir','ver_cotizaciones','crear_cotizaciones','ver_calendario','ver_alertas','ver_ventas','crear_ventas','ver_solicitudes','gestionar_solicitudes'],
   preparacion: ['ver_inicio','ver_pedidos','marcar_proceso','marcar_listo','ver_calendario','ver_alertas'],
 };
 
@@ -799,7 +831,9 @@ const NAV_ITEMS_ALL = [
   {id:'alertas',      icon:'🔔', label:'Alertas',   perm:'ver_alertas'},
   {id:'usuarios',     icon:'👥', label:'Usuarios',  perm:'__developer'},
   {id:'perfiles',     icon:'🔐', label:'Perfiles',  perm:'__developer'},
-  {id:'config',       icon:'⚙️', label:'Config',    perm:'ver_config'},
+  {id:'ventas',        icon:'🛒', label:'Caja',      perm:'ver_ventas'},
+  {id:'solicitudes',   icon:'📨', label:'Solicitudes',perm:'ver_solicitudes'},
+  {id:'config',        icon:'⚙️', label:'Config',    perm:'ver_config'},
 ];
 
 /* ═══════════════════════════════════════════════════════
@@ -815,9 +849,9 @@ const LS = {
 ═══════════════════════════════════════════════════════ */
 let DB = {
   config:[],usuarios:[],perfiles:[],pedidos:[],inventario:[],
-  productos:[],movimientos:[],cotizaciones:[],gastos:[],pagos:[]
+  productos:[],movimientos:[],cotizaciones:[],gastos:[],pagos:[],ventas:[],solicitudes:[]
 };
-let CFG = LS.g('dg_cfg',{ nombre:'DulceGestión', eslogan:'', tel:'', email:'', dir:'', redes:'', nit:'', moneda:'Q', pie:'Gracias por su preferencia.', condiciones:'50% anticipo, saldo contra entrega.', gracias:'¡Gracias por confiar en nosotros!', prefix:'FAC-', facnum:1, licFecha:'', licDias:7 });
+let CFG = LS.g('dg_cfg',{ nombre:'DulceGestión', eslogan:'', tel:'', email:'', dir:'', redes:'', nit:'', moneda:'Q', pie:'Gracias por su preferencia.', condiciones:'50% anticipo, saldo contra entrega.', gracias:'¡Gracias por confiar en nosotros!', prefix:'FAC-', facnum:1, licFecha:'', licDias:7, limitePedidos:0, wsNumero:'' });
 let SCRIPT_URL = LS.g('dg_url','');
 let SESSION = LS.g('dg_session', null); // {id,username,perfil,nombre,perms:[]}
 let syncQueue = []; // offline queue
@@ -864,8 +898,11 @@ async function loadAllData() {
               obj[k]=(typeof p1==='string')?JSON.parse(p1):p1;
             }catch{obj[k]=v;}
           } else if(k==='hora'){
-            // Normalize hora immediately: Sheets may return as ISO date 1899-12-31T10:00:00Z
             obj[k]=normHora(v);
+          } else if(k==='fecha'){
+            // Normalize fecha: Sheets may return as date object or different format
+            const nf=normFecha(v);
+            obj[k]=nf||v;
           } else {
             obj[k]=v;
           }
@@ -877,6 +914,26 @@ async function loadAllData() {
     const cfgRows = DB.config||[];
     cfgRows.forEach(r=>{ if(r.key&&r.value!==null&&r.value!==undefined) CFG[r.key]=r.value; });
     LS.s('dg_cfg',CFG);
+
+    // Migration: if pagos sheet is empty but pedidos have anticipo, seed pagos
+    if((!DB.pagos||DB.pagos.length===0) && DB.pedidos && DB.pedidos.length>0){
+      const seeded=[];
+      DB.pedidos.forEach(p=>{
+        if(N(p.anticipo)>0){
+          seeded.push({id:'seed_'+p.id,pedidoId:p.id,cliente:p.cliente,
+            monto:N(p.anticipo),tipo:'anticipo',
+            fecha:normFecha(p.fecha)||today(),metodo:'Efectivo',
+            created:new Date().toISOString()});
+        }
+      });
+      if(seeded.length>0){
+        DB.pagos=seeded;
+        // Write all to Sheets
+        seeded.forEach(pg=>syncRow('pagos','write',pg,pg.id));
+        console.log('Migrated',seeded.length,'pagos from pedidos');
+      }
+    }
+
     return true;
   } catch(e) {
     console.warn('loadAllData failed:', e.message);
@@ -973,7 +1030,7 @@ function checkLicBanner(){
   } else if(dias<=(parseInt(CFG.licDias)||7)){
     alert.className='al al-wrn'; alert.style.display='flex';
     document.getElementById('lic-alert-title').textContent=`⚠️ Licencia vence en ${dias} día(s)`;
-    document.getElementById('lic-alert-msg').textContent=`Fecha de vencimiento: ${fDate(CFG.licFecha)}. Contacta al proveedor para renovar.`;
+    document.getElementById('lic-alert-msg').textContent=`Fecha de vencimiento: ${fDate(normFecha(CFG.licFecha))}. Contacta al proveedor para renovar.`;
   } else {
     alert.style.display='none';
   }
@@ -1093,7 +1150,7 @@ function buildNav(){
 /* ═══════════════════════════════════════════════════════
    NAVIGATION
 ═══════════════════════════════════════════════════════ */
-const VTITLES={inicio:'Inicio',pedidos:'Pedidos',inventario:'Inventario',recetas:'Catálogo de Productos',cotizaciones:'Cotizaciones',reportes:'Reportes',calendario:'Agenda',alertas:'Alertas',usuarios:'Usuarios',perfiles:'Perfiles y Permisos',config:'Configuración'};
+const VTITLES={inicio:'Inicio',pedidos:'Pedidos',inventario:'Inventario',recetas:'Catálogo de Productos',cotizaciones:'Cotizaciones',reportes:'Reportes',calendario:'Agenda',alertas:'Alertas',usuarios:'Usuarios',perfiles:'Perfiles y Permisos',config:'Configuración',ventas:'Punto de Venta',solicitudes:'Solicitudes de Clientes'};
 let CUR='inicio';
 
 function sv(v){
@@ -1121,6 +1178,8 @@ function renderV(v){
   if(v==='usuarios')     renderUsers();
   if(v==='perfiles')     renderPerfiles();
   if(v==='config')       loadConfigForm();
+  if(v==='ventas')       renderVentas();
+  if(v==='solicitudes')  renderSolicitudes();
 }
 
 /* ═══════════════════════════════════════════════════════
@@ -1175,6 +1234,7 @@ function fabAct(){
   if(CUR==='recetas'&&can('editar_recetas')){openRec(null);return;}
   if(CUR==='inventario'&&can('editar_inventario')){openIng(null);return;}
   if(CUR==='cotizaciones'&&can('crear_cotizaciones')){openCot();return;}
+  if(CUR==='ventas'&&can('crear_ventas')){abrirNuevaVenta();return;}
   if(CUR==='reportes'){document.getElementById('g-fecha').value=today();om('mo-gasto');return;}
   if(can('crear_pedidos')){resetPedForm();om('mo-ped');}
 }
@@ -1245,9 +1305,10 @@ function renderInicio(){
   const peds=DB.pedidos.map(p=>({...p,fecha:normFecha(p.fecha)}));
   const pedHoy=peds.filter(p=>p.fecha===h&&p.estado!=='cancelado');
   const activos=peds.filter(p=>p.estado!=='cancelado'&&p.estado!=='entregado'&&p.fecha>=h).length;
-  // Ventas = dinero efectivamente cobrado (by date received, not delivery date)
-  const pagosHoy=(DB.pagos||[]).filter(pg=>pg.fecha===h);
-  const pagosMesArr=(DB.pagos||[]).filter(pg=>pg.fecha&&pg.fecha.startsWith(mes));
+  // Ventas = dinero efectivamente cobrado (pagos table by received date)
+  const todayPagos=(DB.pagos||[]);
+  const pagosHoy=todayPagos.filter(pg=>normFecha(pg.fecha)===h);
+  const pagosMesArr=todayPagos.filter(pg=>{const f=normFecha(pg.fecha);return f&&f.startsWith(mes);});
   const vHoy=pagosHoy.reduce((s,pg)=>s+N(pg.monto),0);
   const vMes=pagosMesArr.reduce((s,pg)=>s+N(pg.monto),0);
   const cobrar=peds.filter(p=>p.estado!=='cancelado').reduce((s,p)=>s+N(p.restante),0);
@@ -1264,7 +1325,7 @@ function renderInicio(){
     else if(_licStr&&_licStr.includes('/')) {const[_d,_m,_y]=_licStr.split('/');_licStr=`${_y}-${_m}-${_d}`;}
     const dias=Math.ceil((new Date(_licStr)-new Date())/(1000*60*60*24));
     if(dias<=0) banner.innerHTML=`<div class="lic-banner"><span style="font-size:1.2rem">⛔</span><div><b>Licencia vencida</b><br><span style="font-size:.76rem">Contacta al proveedor para renovar el acceso.</span></div></div>`;
-    else if(dias<=(CFG.licDias||7)) banner.innerHTML=`<div class="lic-banner warn"><span style="font-size:1.2rem">⚠️</span><div><b>Licencia vence en ${dias} día(s)</b><br><span style="font-size:.76rem">Fecha: ${fDate(CFG.licFecha)}. Contacta al proveedor.</span></div></div>`;
+    else if(dias<=(CFG.licDias||7)) banner.innerHTML=`<div class="lic-banner warn"><span style="font-size:1.2rem">⚠️</span><div><b>Licencia vence en ${dias} día(s)</b><br><span style="font-size:.76rem">Fecha: ${fDate(normFecha(CFG.licFecha))}. Contacta al proveedor.</span></div></div>`;
     else banner.innerHTML='';
   }
 
@@ -1275,7 +1336,7 @@ function renderInicio(){
   const urg=urgentes().slice(0,2);
   let html='';
   sc.forEach(i=>html+=alHTML('al-dgr','📦',`Stock crítico: ${i.nombre}`,`${R(i.cant)} ${i.unidad} — mín: ${i.min}`));
-  urg.forEach(p=>html+=alHTML('al-wrn','⏰',`Entrega: ${p.cliente}`,`${p.desc} · ${fDate(p.fecha)} ${normHora(p.hora)}`));
+  urg.forEach(p=>html+=alHTML('al-wrn','⏰',`Entrega: ${p.cliente}`,`${p.desc} · ${fDate(normFecha(p.fecha))} ${normHora(p.hora)}`));
   if(!html) html=alHTML('al-ok','✅','Todo en orden','Sin alertas críticas');
   al.innerHTML=html;
 
@@ -1347,18 +1408,18 @@ function verPed(id){
 
   // ── Sección B: Extras al crear el pedido ──
   if(eC.length){
-    ingsH+=`<div style="font-size:.7rem;font-weight:700;color:var(--mauve);margin:7px 0 4px;letter-spacing:.2px">➕ EXTRAS DEL PEDIDO (al crear)</div>`;
+    ingsH+=`<div style="font-size:.7rem;font-weight:700;color:var(--mauve);margin:7px 0 4px;letter-spacing:.2px">➕ EXTRAS DEL PEDIDO</div>`;
     ingsH+=eC.map(u=>{
       const i=ING().find(x=>x.id==u.iid);
-      const nombre=i?.nombre||u.nombre||'?';
+      const nombre=i?.nombre||u.nombre||'Ingrediente extra';
       const unidad=i?.unidad||u.unidad||'';
-      const pv=N(i?.precioVenta)||N(i?.costo)||N(u.precioVenta)||0;
+      const pv=N(i?.precioVenta)>0?N(i.precioVenta):(N(i?.costo)||N(u.precioVenta)||0);
       const costo=pv>0?money(pv*N(u.cant)):'';
       return`<div class="ic-row" style="background:rgba(124,74,106,.06)">
         <span class="ic-name">${nombre}</span>
         <span class="ic-qty" style="color:var(--mauve)">${R(u.cant)}</span>
         <span class="ic-unit">${unidad}</span>
-        ${costo?`<span style="font-size:.7rem;font-weight:700;color:var(--amber)">${costo}</span>`:''}
+        ${costo?`<span style="font-size:.72rem;font-weight:700;color:var(--amber);margin-left:auto">${costo}</span>`:''}
       </div>`;
     }).join('');
   }
@@ -1377,7 +1438,7 @@ function verPed(id){
   document.getElementById('ver-content').innerHTML=`
     <div class="card" style="margin-bottom:9px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:7px;flex-wrap:wrap;gap:5px">
-        <span class="chip-del">🗓 ${fDate(p.fecha)} · ${p.hora}h</span>
+        <span class="chip-del">🗓 ${fDate(normFecha(p.fecha))} · ${normHora(p.hora)}h</span>
         <span class="badge ${BA[p.estado]||'b-pend'}">${ES[p.estado]||p.estado}</span>
       </div>
       <div style="font-family:Georgia,serif;font-size:1.2rem;color:var(--ink)">${p.cliente}</div>
@@ -1642,12 +1703,10 @@ function recalcTotal(){
     const cant=N(ce.value); if(!cant) continue;
     const ing=ING().find(i=>i.id==ie.value);
     if(ing){
-      const pv2=N(ing.precioVenta)||N(ing.costo)||0;
-      if(pv2>0){
-        const costoExtra=pv2*cant;
-        costoExtras+=costoExtra;
-        extrasDetalle.push(`${ing.nombre} × ${R(cant)} ${ing.unidad} = ${money(costoExtra)} (${money(pv2)}/${ing.unidad})`);
-      }
+      const pv2=N(ing.precioVenta)>0?N(ing.precioVenta):N(ing.costo)||0;
+      const costoExtra=pv2*cant;
+      costoExtras+=costoExtra;
+      if(pv2>0) extrasDetalle.push(`${ing.nombre} × ${R(cant)} ${ing.unidad} = ${money(costoExtra)}`);
     }
   }
 
@@ -1705,6 +1764,16 @@ function calcRest(){
 function savePed(){
   const cli=document.getElementById('f-cli').value.trim(),desc=document.getElementById('f-desc').value.trim(),fecha=document.getElementById('f-fecha').value,total=N(document.getElementById('f-total').value);
   if(!cli||!desc||!fecha||!total){toast('❌ Completa los campos requeridos');return;}
+  // Check daily order limit
+  const lim=parseInt(CFG.limitePedidos)||0;
+  const editId0=parseInt(document.getElementById('f-edit-id').value)||0;
+  if(lim>0&&!editId0){
+    const pedsFecha=PEDS_DB().filter(p=>normFecha(p.fecha)===fecha&&p.estado!=='cancelado').length;
+    if(pedsFecha>=lim){
+      toast(`❌ Límite de ${lim} pedidos para esta fecha alcanzado`);
+      return;
+    }
+  }
   const recId=parseInt(document.getElementById('f-rec').value)||null,qty=parseInt(document.getElementById('f-qty').value)||1,ant=N(document.getElementById('f-anticipo').value)||0;
   let ingsCalc=[];
   if(recId){const prod=PRODS_DB().find(p=>p.id==recId);if(prod){const ings=Array.isArray(prod.ings)?prod.ings:(typeof prod.ings==='string'?JSON.parse(prod.ings||'[]'):[]);ingsCalc=ings.map(u=>({iid:u.iid,cant:u.cant*qty}));}}
@@ -1793,9 +1862,17 @@ function openIng(id){
 function saveIng(){
   const nombre=document.getElementById('i-nombre').value.trim();if(!nombre){toast('❌ Ingresa un nombre');return;}
   const eid=parseInt(document.getElementById('i-edit-id').value)||0;
-  const data={nombre,cant:N(document.getElementById('i-cant').value),unidad:document.getElementById('i-unidad').value,min:N(document.getElementById('i-min').value),max:N(document.getElementById('i-max').value)||100,costo:N(document.getElementById('i-costo').value),precioVenta:N(document.getElementById('i-pventa').value),updated:new Date().toISOString()};
-  if(eid){const i=ING().find(x=>x.id==eid);if(i){Object.assign(i,data);syncRow('inventario','update',i,i.id);}}
-  else{const i={id:uid(),...data};DB.inventario.push(i);syncRow('inventario','write',i,i.id);}
+  const precioVentaVal=N(document.getElementById('i-pventa').value)||0;
+  const data={nombre,cant:N(document.getElementById('i-cant').value),unidad:document.getElementById('i-unidad').value,
+    min:N(document.getElementById('i-min').value),max:N(document.getElementById('i-max').value)||100,
+    costo:N(document.getElementById('i-costo').value),precioVenta:precioVentaVal,
+    updated:new Date().toISOString()};
+  if(eid){
+    const i=ING().find(x=>x.id==eid);
+    if(i){Object.assign(i,data);syncRow('inventario','update',i,i.id);}
+  } else {
+    const i={id:uid(),...data};DB.inventario.push(i);syncRow('inventario','write',i,i.id);
+  }
   cm('mo-ing');toast('✅ Guardado');renderStock();
 }
 function renderMovForm(tipo){
@@ -1969,6 +2046,13 @@ function saveGasto(){
 
 
 
+let repTab='ventas';
+function tabR(t,el){
+  repTab=t;
+  document.querySelectorAll('#tabs-rep .tab').forEach(x=>x.classList.remove('on'));
+  el.classList.add('on');
+  renderRep(t);
+}
 function getRepMes(){return document.getElementById('rep-mes-filter')?.value||today().slice(0,7);}
 function getRepAnio(){return document.getElementById('rep-anio-filter')?.value||today().slice(0,4);}
 
@@ -2004,12 +2088,12 @@ function renderRep(tab){
       const k=d.toISOString().slice(0,10);
       const lbl=d.toLocaleDateString('es',{day:'2-digit',month:'2-digit'});
       // Cash received on this date (from pagos)
-      const t=(DB.pagos||[]).filter(pg=>pg.fecha===k).reduce((s,pg)=>s+N(pg.monto),0);
+      const t=(DB.pagos||[]).filter(pg=>normFecha(pg.fecha)===k).reduce((s,pg)=>s+N(pg.monto),0);
       dias.push({lbl,t});
     }
     const mx=Math.max(...dias.map(d=>d.t),1);
     // Monthly totals
-    const pagosMes=(DB.pagos||[]).filter(pg=>pg.fecha&&pg.fecha.startsWith(filtMes));
+    const pagosMes=(DB.pagos||[]).filter(pg=>{const f=normFecha(pg.fecha);return f&&f.startsWith(filtMes);});
     const cobradoMes=pagosMes.reduce((s,pg)=>s+N(pg.monto),0);
     const pedidosMes=PEDS_DB().filter(p=>{const f=normFecha(p.fecha);return f.startsWith(filtMes)&&p.estado!=='cancelado';}).length;
     const porCobrar=PEDS_DB().filter(p=>p.estado!=='cancelado').reduce((s,p)=>s+N(p.restante),0);
@@ -2021,7 +2105,7 @@ function renderRep(tab){
     const daysInM=new Date(parseInt(filtMes.slice(0,4)),parseInt(filtMes.slice(5,7)),0).getDate();
     for(let d=1;d<=daysInM;d++){
       const k=`${filtMes}-${String(d).padStart(2,'0')}`;
-      const t=(DB.pagos||[]).filter(pg=>pg.fecha===k).reduce((s,pg)=>s+N(pg.monto),0);
+      const t=(DB.pagos||[]).filter(pg=>normFecha(pg.fecha)===k).reduce((s,pg)=>s+N(pg.monto),0);
       if(t>0) diasMes.push({k,d,t});
     }
     const mxM=Math.max(...diasMes.map(x=>x.t),1);
@@ -2045,7 +2129,7 @@ function renderRep(tab){
 
   } else if(tab==='pnl'){
     // PnL uses PAYMENT DATE (pagos) for income, not delivery date
-    const pagosMes=(DB.pagos||[]).filter(pg=>pg.fecha&&pg.fecha.startsWith(filtMes));
+    const pagosMes=(DB.pagos||[]).filter(pg=>{const f=normFecha(pg.fecha);return f&&f.startsWith(filtMes);});
     const ingresosCobrados=pagosMes.reduce((s,pg)=>s+N(pg.monto),0);
 
     // Pending (agreed but not yet received)
@@ -2054,7 +2138,13 @@ function renderRep(tab){
     // Cost of production: ingredients used in pedidos whose delivery is in this month
     const pedsMes=PEDS_DB().filter(p=>{const f=normFecha(p.fecha);return f.startsWith(filtMes)&&p.estado!=='cancelado';});
     const costoP=pedsMes.reduce((s,p)=>{
-      const parseA=v=>Array.isArray(v)?v:(typeof v==='string'?JSON.parse(v||'[]'):[]);
+      const parseA=v=>{
+    if(!v||v===''||v==='null') return [];
+    if(Array.isArray(v)) return v;
+    let s=typeof v==='string'?v:String(v);
+    for(let i=0;i<3;i++){s=s.trim();if(!s.startsWith('[')&&!s.startsWith('{'))break;try{const p=JSON.parse(s);if(Array.isArray(p))return p;if(typeof p==='string'){s=p;continue;}break;}catch{break;}}
+    return [];
+  };
       const iU=parseA(p.ingsUsados);const eP=parseA(p.extrasProduccion);
       return s+[...iU,...eP].reduce((ss,u)=>{const i=ING().find(x=>x.id==u.iid);return ss+(i?.costo?N(i.costo)*N(u.cant):0);},0);
     },0);
@@ -2168,7 +2258,7 @@ function renderAlertas(){
   html+=`<div class="shd" style="margin-top:7px"><h3>💰 Cobros Pendientes</h3></div>`;
   const pc=PEDS_DB().filter(p=>N(p.restante)>0&&p.estado!=='cancelado');
   if(!pc.length)html+=alHTML('al-ok','💚','Sin cobros pendientes','Todo al corriente');
-  pc.slice(0,8).forEach(p=>html+=alHTML('al-wrn','💰',`${p.cliente} — ${money(p.restante)}`,`${p.desc} · ${fDate(p.fecha)}`));
+  pc.slice(0,8).forEach(p=>html+=alHTML('al-wrn','💰',`${p.cliente} — ${money(p.restante)}`,`${p.desc} · ${fDate(normFecha(p.fecha))}`));
   html+=`<div class="shd" style="margin-top:7px"><h3>🧂 Stock vs Pedidos Próximos</h3></div>`;
   const prox=PEDS_DB().filter(p=>p.estado!=='cancelado'&&p.estado!=='entregado'&&p.fecha>=h);
   const sn={};prox.forEach(p=>{const ic=Array.isArray(p.ingsCalc)?p.ingsCalc:(typeof p.ingsCalc==='string'?JSON.parse(p.ingsCalc||'[]'):[]);ic.forEach(u=>{sn[u.iid]=(sn[u.iid]||0)+u.cant;});});
@@ -2303,7 +2393,7 @@ function facHeader(tipo,num,fecha){
   const contact=[CFG.tel,CFG.email,CFG.dir,CFG.redes].filter(Boolean).join('  ·  ');if(contact)lines.push(`<div style="font-size:10px;color:#666;margin-top:1px">${contact}</div>`);
   return`<div style="border-bottom:2px solid #1c0f00;padding-bottom:12px;margin-bottom:14px"><div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;flex-wrap:wrap"><div><div style="font-size:19px;font-weight:700;color:#1c0f00;font-family:Georgia,serif">🧁 ${neg}</div>${lines.join('')}</div><div style="text-align:right;flex-shrink:0"><div style="font-size:17px;font-weight:700;color:#c97c1e;font-family:Georgia,serif">${tipo.toUpperCase()}</div><div style="font-size:11px;color:#555">N° <b>${num}</b></div><div style="font-size:11px;color:#555">Fecha: ${fecha}</div></div></div></div>`;
 }
-function facClienteRow(p){return`<div style="background:#fdf5e9;border-radius:8px;padding:9px 11px;margin-bottom:12px;border:1px solid rgba(100,60,20,.15)"><div style="font-size:10px;font-weight:700;letter-spacing:.6px;color:#7a4a20;margin-bottom:4px">DATOS DEL CLIENTE</div><div style="font-size:13px;font-weight:700;color:#1c0f00">${p.cliente}</div>${p.telefono?`<div style="font-size:11px;color:#555">📞 ${p.telefono}</div>`:''}<div style="font-size:11px;color:#555;margin-top:2px">📅 Entrega: <b>${fDate(p.fecha)}</b> a las <b>${normHora(p.hora)}h</b></div></div>`;}
+function facClienteRow(p){return`<div style="background:#fdf5e9;border-radius:8px;padding:9px 11px;margin-bottom:12px;border:1px solid rgba(100,60,20,.15)"><div style="font-size:10px;font-weight:700;letter-spacing:.6px;color:#7a4a20;margin-bottom:4px">DATOS DEL CLIENTE</div><div style="font-size:13px;font-weight:700;color:#1c0f00">${p.cliente}</div>${p.telefono?`<div style="font-size:11px;color:#555">📞 ${p.telefono}</div>`:''}<div style="font-size:11px;color:#555;margin-top:2px">📅 Entrega: <b>${fDate(normFecha(p.fecha))}</b> a las <b>${normHora(p.hora)}h</b></div></div>`;}
 function facTabla(filas){
   return`<table style="width:100%;border-collapse:collapse;margin-bottom:12px">
     <thead><tr style="background:#1c0f00;color:#fff">
@@ -2325,15 +2415,14 @@ function facPie(notas){const pie=CFG.pie||'',cond=CFG.condiciones||'',grac=CFG.g
 // ── Helper: build factura rows including extras ──
 function buildPedFilas(p){
   const parseA=v=>{
-    if(!v) return [];
+    if(!v||v===''||v==='null') return [];
     if(Array.isArray(v)) return v;
-    if(typeof v==='string'){
-      try{
-        const p=JSON.parse(v);
-        // double-stringified: '["[{..."]' → parse again
-        if(typeof p==='string') return JSON.parse(p);
-        return Array.isArray(p)?p:[];
-      }catch{return [];}
+    let s=typeof v==='string'?v:String(v);
+    // Unwrap up to 3 levels of JSON stringification
+    for(let i=0;i<3;i++){
+      s=s.trim();
+      if(!s.startsWith('[')&&!s.startsWith('{')) break;
+      try{const p=JSON.parse(s);if(Array.isArray(p))return p;if(typeof p==='string'){s=p;continue;}break;}catch{break;}
     }
     return [];
   };
@@ -2376,7 +2465,7 @@ function buildPedFilas(p){
     // Use stored values as fallback when ingredient not found in current ING()
     const nombre=ing?.nombre||u.nombre||'Ingrediente extra';
     const unidad=ing?.unidad||u.unidad||'';
-    const pventa=N(ing?.precioVenta)||N(ing?.costo)||N(u.precioVenta)||0;
+    const pventa=N(ing?.precioVenta)>0?N(ing.precioVenta):(N(ing?.costo)||N(u.precioVenta)||0);
     const costo=pventa?pventa*N(u.cant):0;
     costoExtras+=costo;
     extrasFilas.push({
@@ -2785,7 +2874,7 @@ function loadConfigForm(){
   // base fields
   const m={nombre:'nombre',eslogan:'eslogan',tel:'tel',email:'email',dir:'dir',redes:'redes',nit:'nit',moneda:'moneda',pie:'pie',condiciones:'condiciones',gracias:'gracias',prefix:'prefix',facnum:'facnum','lic-fecha':'licFecha','lic-dias':'licDias'};
   Object.entries(m).forEach(([k,v])=>{const el=document.getElementById('cfg-'+k);if(el&&CFG[v]!==undefined)el.value=CFG[v]||'';});
-  if(CFG.licFecha){const dias=Math.ceil((new Date(CFG.licFecha)-new Date())/(1000*60*60*24));const ls=document.getElementById('lic-status');if(ls)ls.innerHTML=`<span style="color:${dias>0?'var(--ok)':'var(--danger)'};font-weight:700">${dias>0?`Activa · ${dias} días restantes`:`⛔ VENCIDA · ${fDate(CFG.licFecha)}`}</span>`;}
+  if(CFG.licFecha){const dias=Math.ceil((new Date(CFG.licFecha)-new Date())/(1000*60*60*24));const ls=document.getElementById('lic-status');if(ls)ls.innerHTML=`<span style="color:${dias>0?'var(--ok)':'var(--danger)'};font-weight:700">${dias>0?`Activa · ${dias} días restantes`:`⛔ VENCIDA · ${fDate(normFecha(CFG.licFecha))}`}</span>`;}
 
   // Show license card only for developer
   const licCard=document.getElementById('lic-card');
