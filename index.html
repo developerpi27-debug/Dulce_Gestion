@@ -376,6 +376,12 @@ select.fc{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
         <button class="tab" onclick="tabR('productos',this)">Productos</button>
         <button class="tab" onclick="tabR('inventario',this)">Inventario</button>
       </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+        <select class="fc" id="rep-mes-filter" onchange="renderRep(repTab)" style="font-size:.76rem;padding:6px 10px;max-width:155px">
+        </select>
+        <select class="fc" id="rep-anio-filter" onchange="buildRepMeses();renderRep(repTab)" style="font-size:.76rem;padding:6px 10px;max-width:90px">
+        </select>
+      </div>
       <div id="rep-content"></div>
     </div>
 
@@ -809,7 +815,7 @@ const LS = {
 ═══════════════════════════════════════════════════════ */
 let DB = {
   config:[],usuarios:[],perfiles:[],pedidos:[],inventario:[],
-  productos:[],movimientos:[],cotizaciones:[],gastos:[]
+  productos:[],movimientos:[],cotizaciones:[],gastos:[],pagos:[]
 };
 let CFG = LS.g('dg_cfg',{ nombre:'DulceGestión', eslogan:'', tel:'', email:'', dir:'', redes:'', nit:'', moneda:'Q', pie:'Gracias por su preferencia.', condiciones:'50% anticipo, saldo contra entrega.', gracias:'¡Gracias por confiar en nosotros!', prefix:'FAC-', facnum:1, licFecha:'', licDias:7 });
 let SCRIPT_URL = LS.g('dg_url','');
@@ -855,11 +861,12 @@ async function loadAllData() {
           if(typeof v==='string'&&(v.startsWith('[')||v.startsWith('{'))){
             try{
               const p1=JSON.parse(v);
-              // handle double-stringified JSON ("[{...}]" stored as string)
               obj[k]=(typeof p1==='string')?JSON.parse(p1):p1;
             }catch{obj[k]=v;}
+          } else if(k==='hora'){
+            // Normalize hora immediately: Sheets may return as ISO date 1899-12-31T10:00:00Z
+            obj[k]=normHora(v);
           } else {
-            // Normalize hora field: Sheets may return time as decimal fraction
             obj[k]=v;
           }
         }
@@ -1063,6 +1070,7 @@ function bootApp(){
   if(SESSION.perfil==='developer') document.getElementById('lic-card').style.display='';
 
   loadConfig();
+  buildRepAnios();buildRepMeses();
   // Navigate to first view the user has access to
   const firstView = NAV_ITEMS_ALL.find(item=>{
     if(item.perm==='__developer') return SESSION.perfil==='developer';
@@ -1107,7 +1115,7 @@ function renderV(v){
   if(v==='inventario')   renderStock();
   if(v==='recetas')      renderRecs();
   if(v==='cotizaciones') renderCots();
-  if(v==='reportes')     renderRep('ventas');
+  if(v==='reportes'){buildRepAnios();buildRepMeses();renderRep('ventas');}
   if(v==='calendario')   renderCal();
   if(v==='alertas')      renderAlertas();
   if(v==='usuarios')     renderUsers();
@@ -1129,21 +1137,34 @@ const R=v=>{const n=N(v);return n%1===0?n:parseFloat(n.toFixed(3));};
 const fDate=s=>{if(!s)return'';try{const str=String(s).trim();if(/^\d{4}-\d{2}-\d{2}/.test(str)){const[y,m,d]=str.split('-');return`${d}/${m}/${y}`;}if(/^\d{2}\/\d{2}\/\d{4}/.test(str))return str;const d=new Date(str);if(!isNaN(d))return d.toLocaleDateString('es',{day:'2-digit',month:'2-digit',year:'numeric'});}catch{}return String(s).slice(0,10);};
 
 function normHora(v){
-  if(!v&&v!==0) return '';
-  // Sheets decimal fraction (0.625 = 15:00)
-  if(typeof v==='number'||(!isNaN(parseFloat(v))&&!String(v).includes(':'))){
-    const frac=parseFloat(v)%1;
-    const totalMin=Math.round(frac*24*60);
+  if(v===null||v===undefined||v==='') return '';
+  // Strip apostrophe prefix added by Apps Script to prevent time conversion
+  if(typeof v==='string'&&v.startsWith("'")) v=v.slice(1);
+  const s=String(v).trim();
+  // Already HH:MM or HH:MM:SS
+  if(/^\d{1,2}:\d{2}(:\d{2})?$/.test(s)) return s.slice(0,5);
+  // ISO datetime string (e.g. 1899-12-31T00:10:00.000Z from Sheets time field)
+  // MUST use UTC methods to avoid timezone shift
+  if(s.includes('T')){
+    try{
+      const d=new Date(s);
+      if(!isNaN(d)){
+        const hh=String(d.getUTCHours()).padStart(2,'0');
+        const mm=String(d.getUTCMinutes()).padStart(2,'0');
+        return `${hh}:${mm}`;
+      }
+    }catch{}
+  }
+  // Sheets decimal fraction: 0 to 1 representing fraction of day (0.625 = 15:00)
+  const num=parseFloat(s);
+  if(!isNaN(num)&&num>=0&&num<1){
+    const totalMin=Math.round(num*24*60);
     const hh=Math.floor(totalMin/60);
     const mm=totalMin%60;
     return `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}`;
   }
-  const s=String(v).trim();
-  // HH:MM:SS → HH:MM
-  if(/^\d{1,2}:\d{2}(:\d{2})?$/.test(s)) return s.slice(0,5);
-  // ISO datetime → extract time
-  if(s.includes('T')){try{const d=new Date(s);return`${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;}catch{}}
-  return s.slice(0,5);
+  // Fallback: return as-is if already looks like time
+  return s.length>=5?s.slice(0,5):'';
 }
 const money=v=>CUR_SYM()+N(v).toLocaleString('es',{minimumFractionDigits:2,maximumFractionDigits:2});
 const CUR_SYM=()=>CFG.moneda||'Q';
@@ -1195,21 +1216,28 @@ function changePass(){
    INICIO
 ═══════════════════════════════════════════════════════ */
 function normFecha(v){
-  // Normalize fecha to YYYY-MM-DD regardless of how Sheets returned it
   if(!v) return '';
+  // Sheets serial number (integer = date, fraction = time — skip fractions)
   if(typeof v==='number'){
-    // Google Sheets serial date
+    if(v<1) return ''; // pure time fraction, not a date
     const d=new Date(Math.round((v-25569)*86400*1000));
     return d.toISOString().slice(0,10);
   }
   const s=String(v).trim();
+  if(!s) return '';
   // Already YYYY-MM-DD
   if(/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0,10);
   // DD/MM/YYYY
   if(/^\d{2}\/\d{2}\/\d{4}/.test(s)){const[d,m,y]=s.split('/');return`${y}-${m}-${d}`;}
-  // M/D/YYYY or similar
-  try{const d=new Date(s);if(!isNaN(d)) return d.toISOString().slice(0,10);}catch{}
-  return s.slice(0,10);
+  // M/D/YYYY (e.g. 4/26/2026)
+  if(/^\d{1,2}\/\d{1,2}\/\d{4}/.test(s)){const p=s.split('/');return`${p[2]}-${p[0].padStart(2,'0')}-${p[1].padStart(2,'0')}`;}
+  // ISO datetime → extract date part only
+  if(s.includes('T')) return s.slice(0,10);
+  // Looks like a time (HH:MM) — NOT a date, skip
+  if(/^\d{1,2}:\d{2}/.test(s)) return '';
+  // Last resort — only if looks like a proper date string
+  if(s.length>=8){try{const d=new Date(s);if(!isNaN(d)&&d.getFullYear()>1900) return d.toISOString().slice(0,10);}catch{}}
+  return '';
 }
 
 function renderInicio(){
@@ -1217,8 +1245,11 @@ function renderInicio(){
   const peds=DB.pedidos.map(p=>({...p,fecha:normFecha(p.fecha)}));
   const pedHoy=peds.filter(p=>p.fecha===h&&p.estado!=='cancelado');
   const activos=peds.filter(p=>p.estado!=='cancelado'&&p.estado!=='entregado'&&p.fecha>=h).length;
-  const vHoy=pedHoy.filter(p=>p.estado==='entregado').reduce((s,p)=>s+N(p.total),0);
-  const vMes=peds.filter(p=>p.fecha&&p.fecha.startsWith(mes)&&p.estado!=='cancelado').reduce((s,p)=>s+N(p.total),0);
+  // Ventas = dinero efectivamente cobrado (by date received, not delivery date)
+  const pagosHoy=(DB.pagos||[]).filter(pg=>pg.fecha===h);
+  const pagosMesArr=(DB.pagos||[]).filter(pg=>pg.fecha&&pg.fecha.startsWith(mes));
+  const vHoy=pagosHoy.reduce((s,pg)=>s+N(pg.monto),0);
+  const vMes=pagosMesArr.reduce((s,pg)=>s+N(pg.monto),0);
   const cobrar=peds.filter(p=>p.estado!=='cancelado').reduce((s,p)=>s+N(p.restante),0);
   document.getElementById('sv-hoy').textContent=money(vHoy);
   document.getElementById('sv-cobrar').textContent=money(cobrar);
@@ -1319,8 +1350,16 @@ function verPed(id){
     ingsH+=`<div style="font-size:.7rem;font-weight:700;color:var(--mauve);margin:7px 0 4px;letter-spacing:.2px">➕ EXTRAS DEL PEDIDO (al crear)</div>`;
     ingsH+=eC.map(u=>{
       const i=ING().find(x=>x.id==u.iid);
-      const costo=i?.costo?money(i.costo*u.cant):'';
-      return`<div class="ic-row" style="background:rgba(124,74,106,.06)"><span class="ic-name">${i?.nombre||'?'}</span><span class="ic-qty" style="color:var(--mauve)">${R(u.cant)}</span><span class="ic-unit">${i?.unidad||''}</span>${costo?`<span style="font-size:.68rem;font-weight:700;color:var(--amber)">${costo}</span>`:''}</div>`;
+      const nombre=i?.nombre||u.nombre||'?';
+      const unidad=i?.unidad||u.unidad||'';
+      const pv=N(i?.precioVenta)||N(i?.costo)||N(u.precioVenta)||0;
+      const costo=pv>0?money(pv*N(u.cant)):'';
+      return`<div class="ic-row" style="background:rgba(124,74,106,.06)">
+        <span class="ic-name">${nombre}</span>
+        <span class="ic-qty" style="color:var(--mauve)">${R(u.cant)}</span>
+        <span class="ic-unit">${unidad}</span>
+        ${costo?`<span style="font-size:.7rem;font-weight:700;color:var(--amber)">${costo}</span>`:''}
+      </div>`;
     }).join('');
   }
 
@@ -1513,6 +1552,11 @@ function confirmEntrega(){
   const cargo=N(document.getElementById('ee-cargo').value);
   if(cargo>0){p.total=N(p.total)+cargo;p.restante=N(p.restante)+cargo;}
   p.extrasEntrega=extras;p.costoExtraEntrega=N(document.getElementById('ee-costo').value);p.estado='entregado';p.updated=new Date().toISOString();
+  // If there was a remaining balance being paid at delivery, register it
+  if(cargo>0){
+    const pagoEnt={id:uid(),pedidoId:p.id,cliente:p.cliente,monto:cargo,tipo:'cargo-entrega',fecha:today(),metodo:'Efectivo',created:new Date().toISOString()};
+    DB.pagos.push(pagoEnt);syncRow('pagos','write',pagoEnt,pagoEnt.id);
+  }
   movs.forEach(m=>{DB.movimientos.push(m);syncRow('movimientos','write',m,m.id);});
   syncRow('pedidos','update',p,p.id);
   cm('mo-entrega');toast('📦 Entrega confirmada'+(cargo>0?` — cargo extra: ${money(cargo)}`:''));renderV(CUR);
@@ -1536,6 +1580,9 @@ function confirmCobro(){
   const prevRest=N(p.restante);
   p.restante=Math.max(0,prevRest-monto);if(p.restante===0)p.pagado=true;p.updated=new Date().toISOString();
   syncRow('pedidos','update',p,p.id);
+  // Register payment on today's date
+  const pago={id:uid(),pedidoId:p.id,cliente:p.cliente,monto,tipo:'cobro',fecha:today(),metodo:metodo||'Efectivo',created:new Date().toISOString()};
+  DB.pagos.push(pago);syncRow('pagos','write',pago,pago.id);
   cm('mo-cobro');
   if(can('imprimir')&&confirm('¿Imprimir recibo de este cobro?')) generarReciboCobro(p.id,monto,metodo);
   toast('✅ Cobro registrado');renderV(CUR);
@@ -1594,11 +1641,13 @@ function recalcTotal(){
     if(!ie||!ce) continue;
     const cant=N(ce.value); if(!cant) continue;
     const ing=ING().find(i=>i.id==ie.value);
-    if(ing&&ing.costo){
-      const pv2=ing.precioVenta||ing.costo||0;
-      const costo=pv2*cant;
-      costoExtras+=costo;
-      extrasDetalle.push(`${ing.nombre} × ${R(cant)} ${ing.unidad} = ${money(costo)}`);
+    if(ing){
+      const pv2=N(ing.precioVenta)||N(ing.costo)||0;
+      if(pv2>0){
+        const costoExtra=pv2*cant;
+        costoExtras+=costoExtra;
+        extrasDetalle.push(`${ing.nombre} × ${R(cant)} ${ing.unidad} = ${money(costoExtra)} (${money(pv2)}/${ing.unidad})`);
+      }
     }
   }
 
@@ -1660,7 +1709,12 @@ function savePed(){
   let ingsCalc=[];
   if(recId){const prod=PRODS_DB().find(p=>p.id==recId);if(prod){const ings=Array.isArray(prod.ings)?prod.ings:(typeof prod.ings==='string'?JSON.parse(prod.ings||'[]'):[]);ingsCalc=ings.map(u=>({iid:u.iid,cant:u.cant*qty}));}}
   const extras=[];
-  for(let n=0;n<ecCnt;n++){const ie=document.getElementById(`ec-i-${n}`);const ce=document.getElementById(`ec-c-${n}`);if(!ie||!ce)continue;const cant=N(ce.value);if(!cant)continue;extras.push({iid:parseInt(ie.value),cant});}
+  for(let n=0;n<ecCnt;n++){
+    const ie=document.getElementById(`ec-i-${n}`);const ce=document.getElementById(`ec-c-${n}`);
+    if(!ie||!ce)continue;const cant=N(ce.value);if(!cant)continue;
+    const ingE=ING().find(i=>i.id==ie.value)||{};
+    extras.push({iid:parseInt(ie.value),cant,nombre:ingE.nombre||'',unidad:ingE.unidad||'',precioVenta:N(ingE.precioVenta)||N(ingE.costo)||0});
+  }
   const editId=parseInt(document.getElementById('f-edit-id').value)||0;
   if(editId){
     const p=PEDS_DB().find(x=>x.id==editId);
@@ -1668,6 +1722,11 @@ function savePed(){
   } else {
     const p={id:uid(),cliente:cli,telefono:document.getElementById('f-tel').value,desc,qty,total,anticipo:ant,restante:total-ant,fecha,hora:document.getElementById('f-hora').value,estado:document.getElementById('f-estado').value,notas:document.getElementById('f-notas').value,recId,ingsCalc,extrasCreate:extras,extrasProduccion:[],extrasEntrega:[],ingsUsados:[],created:new Date().toISOString(),updated:new Date().toISOString()};
     DB.pedidos.push(p);syncRow('pedidos','write',p,p.id);
+    // Register anticipo as payment on today's date
+    if(ant>0){
+      const pago={id:uid(),pedidoId:p.id,cliente:p.cliente,monto:ant,tipo:'anticipo',fecha:today(),metodo:'Efectivo',created:new Date().toISOString()};
+      DB.pagos.push(pago);syncRow('pagos','write',pago,pago.id);
+    }
   }
   cm('mo-ped');toast('✅ Pedido guardado');resetPedForm();renderV(CUR);
 }
@@ -1692,7 +1751,7 @@ function addExtraRow(wrapId,prefix){
   // For create-extras (ec), show costo hint and trigger recalcTotal
   const isCreate=(prefix==='ec');
   div.innerHTML=`
-    <select id="${prefix}-i-${n}" style="padding:6px 7px;border:1.5px solid var(--border2);border-radius:8px;font-size:.75rem;background:var(--paper2);color:var(--ink);outline:none;">${ING().map(i=>`<option value="${i.id}">${i.nombre}${i.costo?` ($${i.costo}/${i.unidad})`:''}</option>`).join('')}</select>
+    <select id="${prefix}-i-${n}" style="padding:6px 7px;border:1.5px solid var(--border2);border-radius:8px;font-size:.75rem;background:var(--paper2);color:var(--ink);outline:none;">${ING().map(i=>{const pv=+(i.precioVenta||0)||+(i.costo||0)||0;return`<option value="${i.id}">${i.nombre}${pv?` — $${pv}/${i.unidad}`:''}</option>`;}).join('')}</select>
     <input type="number" step="0.001" id="${prefix}-c-${n}" placeholder="cant"
       style="padding:6px 8px;border:1.5px solid var(--border2);border-radius:8px;font-size:.8rem;background:var(--paper2);outline:none;"
       ${isCreate?`oninput="recalcTotal()"`:''}>
@@ -1907,51 +1966,165 @@ function saveGasto(){
 /* ═══════════════════════════════════════════════════════
    REPORTES
 ═══════════════════════════════════════════════════════ */
-let repTab='ventas';
-function tabR(t,el){repTab=t;document.querySelectorAll('#tabs-rep .tab').forEach(x=>x.classList.remove('on'));el.classList.add('on');renderRep(t);}
+
+
+
+function getRepMes(){return document.getElementById('rep-mes-filter')?.value||today().slice(0,7);}
+function getRepAnio(){return document.getElementById('rep-anio-filter')?.value||today().slice(0,4);}
+
+function buildRepMeses(){
+  const anio=getRepAnio();
+  const sel=document.getElementById('rep-mes-filter');if(!sel)return;
+  const cur=sel.value;
+  sel.innerHTML=['01','02','03','04','05','06','07','08','09','10','11','12'].map(m=>{
+    const lbl=new Date(`${anio}-${m}-02`).toLocaleDateString('es',{month:'long'});
+    const val=`${anio}-${m}`;
+    return`<option value="${val}"${val===cur||(!cur&&val===today().slice(0,7))?'selected':''}>${lbl.charAt(0).toUpperCase()+lbl.slice(1)}</option>`;
+  }).join('');
+}
+
+function buildRepAnios(){
+  const sel=document.getElementById('rep-anio-filter');if(!sel)return;
+  const cur=today().slice(0,4);
+  const years=[String(parseInt(cur)-1),cur,String(parseInt(cur)+1)];
+  sel.innerHTML=years.map(y=>`<option value="${y}"${y===cur?'selected':''}>${y}</option>`).join('');
+}
+
 function renderRep(tab){
   const cont=document.getElementById('rep-content');
+  const filtMes=getRepMes();
+  const filtAnio=getRepAnio();
+
   if(tab==='ventas'){
-    const dias=[];for(let i=6;i>=0;i--){const d=new Date(Date.now()-i*86400000);const k=d.toISOString().slice(0,10);const lbl=d.toLocaleDateString('es',{weekday:'short'});const t=PEDS_DB().filter(p=>p.fecha===k&&p.estado!=='cancelado').reduce((s,p)=>s+N(p.total),0);dias.push({lbl,t});}
-    const mx=Math.max(...dias.map(d=>d.t),1),sem=dias.reduce((s,d)=>s+d.t,0),mes=today().slice(0,7),pm=PEDS_DB().filter(p=>p.fecha&&p.fecha.startsWith(mes)&&p.estado!=='cancelado').length,cobrado=PEDS_DB().reduce((s,p)=>s+N(p.anticipo),0),pcobrar=PEDS_DB().reduce((s,p)=>s+N(p.restante),0);
-    cont.innerHTML=`<div class="sg"><div class="sc sc-a"><div class="sl">Semana</div><div class="sv">${money(sem)}</div><div class="ss">7 días</div></div><div class="sc sc-c"><div class="sl">Pedidos Mes</div><div class="sv">${pm}</div><div class="ss">en el mes</div></div><div class="sc sc-e"><div class="sl">Cobrado</div><div class="sv">${money(cobrado)}</div><div class="ss">real</div></div><div class="sc sc-b"><div class="sl">Por Cobrar</div><div class="sv">${money(pcobrar)}</div><div class="ss">pendiente</div></div></div>
-    <div class="card"><div class="card-hd">📈 Ventas 7 días</div><div class="cbar-wrap">${dias.map(d=>`<div class="cbar-row"><div class="cbar-label">${d.lbl}</div><div class="cbar-bg"><div class="cbar-fill" style="width:${Math.round(d.t/mx*100)}%;background:var(--amber)"></div></div><div class="cbar-val">${money(d.t)}</div></div>`).join('')}</div></div>`;
+    // Last 7 days of the selected period
+    const filtEnd=new Date(filtMes+'-28');
+    const dias=[];
+    for(let i=6;i>=0;i--){
+      const d=new Date(filtEnd.getTime()-i*86400000);
+      const k=d.toISOString().slice(0,10);
+      const lbl=d.toLocaleDateString('es',{day:'2-digit',month:'2-digit'});
+      // Cash received on this date (from pagos)
+      const t=(DB.pagos||[]).filter(pg=>pg.fecha===k).reduce((s,pg)=>s+N(pg.monto),0);
+      dias.push({lbl,t});
+    }
+    const mx=Math.max(...dias.map(d=>d.t),1);
+    // Monthly totals
+    const pagosMes=(DB.pagos||[]).filter(pg=>pg.fecha&&pg.fecha.startsWith(filtMes));
+    const cobradoMes=pagosMes.reduce((s,pg)=>s+N(pg.monto),0);
+    const pedidosMes=PEDS_DB().filter(p=>{const f=normFecha(p.fecha);return f.startsWith(filtMes)&&p.estado!=='cancelado';}).length;
+    const porCobrar=PEDS_DB().filter(p=>p.estado!=='cancelado').reduce((s,p)=>s+N(p.restante),0);
+    const cobradoTotal=(DB.pagos||[]).reduce((s,pg)=>s+N(pg.monto),0);
+    const mesLbl=new Date(filtMes+'-02').toLocaleDateString('es',{month:'long',year:'numeric'});
+
+    // Daily breakdown for the month
+    const diasMes=[];
+    const daysInM=new Date(parseInt(filtMes.slice(0,4)),parseInt(filtMes.slice(5,7)),0).getDate();
+    for(let d=1;d<=daysInM;d++){
+      const k=`${filtMes}-${String(d).padStart(2,'0')}`;
+      const t=(DB.pagos||[]).filter(pg=>pg.fecha===k).reduce((s,pg)=>s+N(pg.monto),0);
+      if(t>0) diasMes.push({k,d,t});
+    }
+    const mxM=Math.max(...diasMes.map(x=>x.t),1);
+
+    cont.innerHTML=`
+    <div class="sg">
+      <div class="sc sc-a"><div class="sl">Cobrado en ${mesLbl.split(' ')[0]}</div><div class="sv">${money(cobradoMes)}</div><div class="ss">efectivo recibido</div></div>
+      <div class="sc sc-c"><div class="sl">Pedidos ${mesLbl.split(' ')[0]}</div><div class="sv">${pedidosMes}</div><div class="ss">para el mes</div></div>
+      <div class="sc sc-e"><div class="sl">Total Cobrado</div><div class="sv">${money(cobradoTotal)}</div><div class="ss">histórico</div></div>
+      <div class="sc sc-b"><div class="sl">Por Cobrar</div><div class="sv">${money(porCobrar)}</div><div class="ss">pendiente</div></div>
+    </div>
+    <div class="card">
+      <div class="card-hd">📈 Últimos 7 días del período</div>
+      <div class="cbar-wrap">${dias.map(d=>`<div class="cbar-row"><div class="cbar-label">${d.lbl}</div><div class="cbar-bg"><div class="cbar-fill" style="width:${Math.round(d.t/mx*100)}%;background:var(--amber)"></div></div><div class="cbar-val">${money(d.t)}</div></div>`).join('')}</div>
+    </div>
+    ${diasMes.length?`<div class="card"><div class="card-hd">📅 Cobros diarios — ${mesLbl}</div><div class="cbar-wrap">${diasMes.map(d=>`<div class="cbar-row"><div class="cbar-label">Día ${d.d}</div><div class="cbar-bg"><div class="cbar-fill" style="width:${Math.round(d.t/mxM*100)}%;background:var(--sage)"></div></div><div class="cbar-val">${money(d.t)}</div></div>`).join('')}</div></div>`:''}
+    <div class="card"><div class="card-hd">📋 Detalle de cobros — ${mesLbl}</div>
+    ${pagosMes.length?pagosMes.map(pg=>`<div class="li"><div class="la bg-c">💰</div><div class="lb"><div class="lt">${pg.cliente||'—'}</div><div class="ls">${pg.tipo} · ${fDate(pg.fecha)} · ${pg.metodo||'—'}</div></div><div class="lm"><div class="lamt">${money(pg.monto)}</div></div></div>`).join('')
+    :`<div class="empty" style="padding:12px"><div class="empty-t">Sin cobros en este período</div></div>`}
+    </div>`;
+
   } else if(tab==='pnl'){
-    const mes=today().slice(0,7),pm=PEDS_DB().filter(p=>p.fecha&&p.fecha.startsWith(mes)&&p.estado!=='cancelado');
-    const ing=pm.reduce((s,p)=>s+N(p.total),0);
-    const costoP=pm.reduce((s,p)=>{const iU=Array.isArray(p.ingsUsados)?p.ingsUsados:(typeof p.ingsUsados==='string'?JSON.parse(p.ingsUsados||'[]'):[]);const eP=Array.isArray(p.extrasProduccion)?p.extrasProduccion:(typeof p.extrasProduccion==='string'?JSON.parse(p.extrasProduccion||'[]'):[]);return s+[...iU,...eP].reduce((ss,u)=>{const i=ING().find(x=>x.id==u.iid);return ss+(i?.costo?i.costo*u.cant:0);},0);},0);
-    const gastosMes=DB.gastos.filter(g=>g.fecha&&g.fecha.startsWith(mes));const tG=gastosMes.reduce((s,g)=>s+N(g.monto),0);
-    const ub=ing-costoP,un=ub-tG,mb=ing>0?Math.round(ub/ing*100):0,mn=ing>0?Math.round(un/ing*100):0;
+    // PnL uses PAYMENT DATE (pagos) for income, not delivery date
+    const pagosMes=(DB.pagos||[]).filter(pg=>pg.fecha&&pg.fecha.startsWith(filtMes));
+    const ingresosCobrados=pagosMes.reduce((s,pg)=>s+N(pg.monto),0);
+
+    // Pending (agreed but not yet received)
+    const pendMes=PEDS_DB().filter(p=>{const f=normFecha(p.fecha);return f.startsWith(filtMes)&&p.estado!=='cancelado';}).reduce((s,p)=>s+N(p.restante),0);
+
+    // Cost of production: ingredients used in pedidos whose delivery is in this month
+    const pedsMes=PEDS_DB().filter(p=>{const f=normFecha(p.fecha);return f.startsWith(filtMes)&&p.estado!=='cancelado';});
+    const costoP=pedsMes.reduce((s,p)=>{
+      const parseA=v=>Array.isArray(v)?v:(typeof v==='string'?JSON.parse(v||'[]'):[]);
+      const iU=parseA(p.ingsUsados);const eP=parseA(p.extrasProduccion);
+      return s+[...iU,...eP].reduce((ss,u)=>{const i=ING().find(x=>x.id==u.iid);return ss+(i?.costo?N(i.costo)*N(u.cant):0);},0);
+    },0);
+
+    // Purchases (inventory entradas) in this month — treated as expense
+    const comprasMes=DB.movimientos.filter(m=>m.tipo==='entrada'&&m.fecha&&String(m.fecha).slice(0,7)===filtMes&&N(m.costo)>0);
+    const totalCompras=comprasMes.reduce((s,m)=>s+N(m.costo),0);
+
+    // Operating expenses
+    const gastosMes=DB.gastos.filter(g=>g.fecha&&g.fecha.startsWith(filtMes));
+    const tG=gastosMes.reduce((s,g)=>s+N(g.monto),0);
     const gbc={};gastosMes.forEach(g=>{gbc[g.cat]=(gbc[g.cat]||0)+N(g.monto);});
-    const mesLbl=new Date(mes+'-02').toLocaleDateString('es',{month:'long',year:'numeric'});
+
+    // Inventory value
+    const valorInv=ING().reduce((s,i)=>s+(N(i.costo)*N(i.cant)),0);
+
+    const ub=ingresosCobrados-costoP;
+    const un=ub-tG-totalCompras;
+    const mb=ingresosCobrados>0?Math.round(ub/ingresosCobrados*100):0;
+    const mn=ingresosCobrados>0?Math.round(un/ingresosCobrados*100):0;
+    const mesLbl=new Date(filtMes+'-02').toLocaleDateString('es',{month:'long',year:'numeric'});
+
     cont.innerHTML=`<div class="card">
       <div class="card-hd">📊 Estado de Resultados — ${mesLbl}</div>
       ${can('ver_gastos')?`<button class="btn btn-ghost btn-sm" style="margin-bottom:11px" onclick="document.getElementById('g-fecha').value=today();om('mo-gasto')">+ Registrar Gasto</button>`:''}
-      <div class="pnl-section"><div class="pnl-section-title">💵 Ingresos</div>
-        <div class="pnl-row"><span class="pnl-label">Ventas (${pm.length} pedidos)</span><span class="pnl-val pnl-positive">${money(ing)}</span></div>
+      <div class="pnl-section"><div class="pnl-section-title">💵 Ingresos Cobrados</div>
+        <div class="pnl-row"><span class="pnl-label">Dinero efectivamente recibido</span><span class="pnl-val pnl-positive">${money(ingresosCobrados)}</span></div>
+        ${pendMes>0?`<div class="pnl-row"><span class="pnl-label" style="font-size:.75rem;color:var(--ink3)">+ Saldo pendiente por cobrar</span><span class="pnl-val" style="color:var(--warn);font-size:.88rem">${money(pendMes)}</span></div>`:''}
       </div>
       <div class="pnl-section"><div class="pnl-section-title">🧂 Costo de Producción</div>
-        <div class="pnl-row"><span class="pnl-label">Ingredientes usados</span><span class="pnl-val pnl-negative">-${money(costoP)}</span></div>
+        <div class="pnl-row"><span class="pnl-label">Ingredientes usados en pedidos</span><span class="pnl-val pnl-negative">-${money(costoP)}</span></div>
       </div>
       <div class="pnl-row" style="padding:9px 0;border-top:1.5px solid var(--border2)"><span style="font-weight:700">Utilidad Bruta</span><span class="pnl-val ${ub>=0?'pnl-positive':'pnl-negative'}">${money(ub)} <span style="font-size:.65rem">(${mb}%)</span></span></div>
-      <div class="pnl-section" style="margin-top:4px"><div class="pnl-section-title">💸 Gastos Operativos</div>
+      <div class="pnl-section" style="margin-top:4px"><div class="pnl-section-title">💸 Gastos y Compras</div>
+        ${totalCompras>0?`<div class="pnl-row"><span class="pnl-label">🛒 Compras de inventario (${comprasMes.length} entradas)</span><span class="pnl-val pnl-negative">-${money(totalCompras)}</span></div>`:''}
         ${Object.entries(gbc).map(([cat,v])=>`<div class="pnl-row"><span class="pnl-label">${cat}</span><span class="pnl-val pnl-negative">-${money(v)}</span></div>`).join('')}
-        ${!gastosMes.length?`<div style="font-size:.77rem;color:var(--ink3);font-style:italic;padding:3px 0">Sin gastos registrados</div>`:''}
-        <div class="pnl-row" style="border-top:1px solid var(--border);margin-top:3px;padding-top:7px"><span style="font-weight:600">Total Gastos</span><span class="pnl-val pnl-negative">-${money(tG)}</span></div>
+        ${!gastosMes.length&&!totalCompras?`<div style="font-size:.77rem;color:var(--ink3);font-style:italic;padding:3px 0">Sin gastos registrados</div>`:''}
+        <div class="pnl-row" style="border-top:1px solid var(--border);margin-top:3px;padding-top:7px"><span style="font-weight:600">Total Egresos</span><span class="pnl-val pnl-negative">-${money(tG+totalCompras)}</span></div>
       </div>
       <div class="pnl-total"><span class="pnl-total-label">UTILIDAD NETA</span><span class="pnl-total-val ${un>=0?'pnl-positive':'pnl-negative'}">${money(un)}</span></div>
       <div style="text-align:right;font-size:.72rem;color:${mn>=0?'var(--ok)':'var(--danger)'};font-weight:700;margin-top:1px">Margen neto: ${mn}%</div>
     </div>
-    <div class="card"><div class="card-hd">💸 Gastos del mes</div>${gastosMes.length?gastosMes.map(g=>`<div class="li"><div class="la bg-b">💸</div><div class="lb"><div class="lt">${g.concepto}</div><div class="ls">${g.cat} · ${fDate(g.fecha)}</div></div><div class="lm"><div class="lamt" style="color:var(--rust2)">${money(g.monto)}</div>${can('ver_gastos')?`<button onclick="if(confirm('¿Eliminar?')){DB.gastos=DB.gastos.filter(x=>x.id!=${g.id});syncRow('gastos','delete',null,${g.id});renderRep('pnl')}" style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:.78rem">✕</button>`:''}</div></div>`).join('')
-    :`<div class="empty" style="padding:12px"><div class="empty-t">Sin gastos</div></div>`}</div>`;
+    <div class="card">
+      <div class="card-hd">📦 Valor del Inventario Actual</div>
+      <div style="font-family:Georgia,serif;font-size:1.6rem;font-weight:700;color:var(--amber);text-align:center;padding:10px 0">${money(valorInv)}</div>
+      <div style="font-size:.72rem;color:var(--ink3);text-align:center;margin-bottom:8px">calculado a precio de costo por unidad</div>
+      ${ING().filter(i=>N(i.costo)>0&&N(i.cant)>0).map(i=>{const v=N(i.costo)*N(i.cant);return`<div class="pnl-row"><span class="pnl-label">${i.nombre} (${R(i.cant)} ${i.unidad})</span><span class="pnl-val" style="font-size:.88rem">${money(v)}</span></div>`;}).join('')}
+    </div>
+    <div class="card"><div class="card-hd">💸 Detalle de Gastos — ${mesLbl}</div>
+    ${gastosMes.length?gastosMes.map(g=>`<div class="li"><div class="la bg-b">💸</div><div class="lb"><div class="lt">${g.concepto}</div><div class="ls">${g.cat} · ${fDate(g.fecha)}</div></div><div class="lm"><div class="lamt" style="color:var(--rust2)">${money(g.monto)}</div>${can('ver_gastos')?`<button onclick="if(confirm('¿Eliminar?')){DB.gastos=DB.gastos.filter(x=>x.id!=${g.id});syncRow('gastos','delete',null,${g.id});renderRep('pnl')}" style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:.78rem">✕</button>`:''}</div></div>`).join('')
+    :`<div class="empty" style="padding:12px"><div class="empty-t">Sin gastos</div></div>`}
+    ${comprasMes.length?`<div style="font-size:.72rem;font-weight:700;color:var(--ink3);margin:8px 0 4px;letter-spacing:.2px">🛒 COMPRAS DE INVENTARIO</div>`+comprasMes.map(m=>`<div class="li"><div class="la bg-c">🛒</div><div class="lb"><div class="lt">${m.nombre}</div><div class="ls">${R(m.cant)} unid · ${new Date(m.fecha).toLocaleDateString('es')}</div></div><div class="lm"><div class="lamt" style="color:var(--rust2)">${money(m.costo)}</div></div></div>`).join(''):''}
+    </div>`;
+
   } else if(tab==='productos'){
     const cnt={};PEDS_DB().filter(p=>p.estado!=='cancelado').forEach(p=>{const k=(p.desc||'').split(' ').slice(0,4).join(' ');cnt[k]=(cnt[k]||0)+N(p.total);});
     const sorted=Object.entries(cnt).sort((a,b)=>b[1]-a[1]).slice(0,8),mx=sorted[0]?.[1]||1;
     const cols=['var(--amber)','var(--rust2)','var(--sage)','var(--gold2)','var(--mauve)'];
-    cont.innerHTML=`<div class="card"><div class="card-hd">🏆 Más vendidos</div><div class="cbar-wrap">${sorted.length?sorted.map((s,i)=>`<div class="cbar-row"><div class="cbar-label" style="font-size:.6rem">${s[0].slice(0,15)}</div><div class="cbar-bg"><div class="cbar-fill" style="width:${Math.round(s[1]/mx*100)}%;background:${cols[i%5]}"></div></div><div class="cbar-val">${money(s[1])}</div></div>`).join(''):`<div class="empty" style="padding:14px"><div class="empty-t">Sin datos</div></div>`}</div></div>
-    <div class="card"><div class="card-hd">💹 Márgenes</div>${PRODS_DB().map(p=>{const ings=Array.isArray(p.ings)?p.ings:(typeof p.ings==='string'?JSON.parse(p.ings||'[]'):[]);const c=ings.reduce((s,u)=>{const i=ING().find(x=>x.id==u.iid);return s+(i?.costo?i.costo*u.cant:0);},0);const m=p.precio>0?Math.round(((p.precio-c)/p.precio)*100):0;return`<div class="li"><div class="la bg-a">🎂</div><div class="lb"><div class="lt">${p.nombre}</div><div class="ls">Costo: ${money(c)} · Precio: ${money(p.precio)}</div></div><div class="lm"><div class="lamt" style="color:${m>50?'var(--ok)':m>25?'var(--warn)':'var(--danger)'}">${m}%</div></div></div>`;}).join('')||`<div class="empty" style="padding:12px"><div class="empty-t">Sin productos</div></div>`}</div>`;
+    cont.innerHTML=`<div class="card"><div class="card-hd">🏆 Más vendidos (histórico)</div><div class="cbar-wrap">${sorted.length?sorted.map((s,i)=>`<div class="cbar-row"><div class="cbar-label" style="font-size:.6rem">${s[0].slice(0,15)}</div><div class="cbar-bg"><div class="cbar-fill" style="width:${Math.round(s[1]/mx*100)}%;background:${cols[i%5]}"></div></div><div class="cbar-val">${money(s[1])}</div></div>`).join(''):`<div class="empty" style="padding:14px"><div class="empty-t">Sin datos</div></div>`}</div></div>
+    <div class="card"><div class="card-hd">💹 Márgenes por producto</div>${PRODS_DB().map(p=>{const ings=Array.isArray(p.ings)?p.ings:(typeof p.ings==='string'?JSON.parse(p.ings||'[]'):[]);const c=ings.reduce((s,u)=>{const i=ING().find(x=>x.id==u.iid);return s+(i?.costo?N(i.costo)*N(u.cant):0);},0);const m=p.precio>0?Math.round(((p.precio-c)/p.precio)*100):0;return`<div class="li"><div class="la bg-a">🎂</div><div class="lb"><div class="lt">${p.nombre}</div><div class="ls">Costo prod: ${money(c)} · Precio: ${money(p.precio)}</div></div><div class="lm"><div class="lamt" style="color:${m>50?'var(--ok)':m>25?'var(--warn)':'var(--danger)'}">${m}%</div></div></div>`;}).join('')||`<div class="empty" style="padding:12px"><div class="empty-t">Sin productos</div></div>`}</div>`;
   } else if(tab==='inventario'){
-    cont.innerHTML=`<div class="card"><div class="card-hd">📦 Stock actual</div>${ING().map(i=>{const pct=Math.min(100,Math.round((i.cant/Math.max(i.max,0.001))*100));const s=i.cant<=i.min?'crit':i.cant<=i.min*1.5?'low':'ok';return`<div class="cbar-row" style="margin-bottom:6px"><div class="cbar-label" style="font-size:.6rem">${(i.nombre||'').split(' ')[0]}</div><div class="cbar-bg"><div class="cbar-fill" style="width:${pct}%;background:${s==='ok'?'var(--sage)':s==='low'?'var(--gold2)':'var(--rust2)'}"></div></div><div class="cbar-val" style="font-size:.63rem">${R(i.cant)}${i.unidad}</div></div>`;}).join('')}</div>`;
+    const valorInv=ING().reduce((s,i)=>s+(N(i.costo)*N(i.cant)),0);
+    cont.innerHTML=`
+    <div class="card"><div class="card-hd">💰 Valor del Inventario</div>
+      <div style="font-family:Georgia,serif;font-size:1.8rem;font-weight:700;color:var(--amber);text-align:center;padding:10px 0">${money(valorInv)}</div>
+      <div style="font-size:.72rem;color:var(--ink3);text-align:center">a precio de costo por unidad</div>
+    </div>
+    <div class="card"><div class="card-hd">📦 Stock actual por ingrediente</div>
+    ${ING().map(i=>{const pct=Math.min(100,Math.round((N(i.cant)/Math.max(N(i.max),0.001))*100));const s=N(i.cant)<=N(i.min)?'crit':N(i.cant)<=N(i.min)*1.5?'low':'ok';const valor=N(i.costo)*N(i.cant);return`<div class="ibr"><div style="font-size:1rem">${s==='crit'?'🔴':s==='low'?'🟡':'🟢'}</div><div class="ibr-body"><div style="display:flex;justify-content:space-between"><span style="font-size:.82rem;font-weight:700">${i.nombre}</span><span style="font-size:.8rem;font-weight:700;color:var(--amber)">${R(i.cant)} ${i.unidad}</span></div><div class="ibr-bg"><div class="ibr-fill fill-${s}" style="width:${pct}%"></div></div><div style="display:flex;justify-content:space-between;font-size:.64rem;color:var(--ink3);margin-top:2px"><span>Mín:${N(i.min)} · Máx:${N(i.max)}</span>${valor>0?`<span>Valor: ${money(valor)}</span>`:''}</div></div></div>`;}).join('')}
+    </div>`;
   }
 }
 
@@ -2199,15 +2372,18 @@ function buildPedFilas(p){
   const extrasFilas=[];
   Object.values(extMap).forEach(u=>{
     const ing=ING().find(i=>i.id==u.iid);
-    if(!ing||!u.cant) return;
-    const pventa=ing.precioVenta||ing.costo||0;  // use precioVenta for billing, fallback to costo
-    const costo=pventa?N(pventa)*N(u.cant):0;
+    if(!u.cant) return;
+    // Use stored values as fallback when ingredient not found in current ING()
+    const nombre=ing?.nombre||u.nombre||'Ingrediente extra';
+    const unidad=ing?.unidad||u.unidad||'';
+    const pventa=N(ing?.precioVenta)||N(ing?.costo)||N(u.precioVenta)||0;
+    const costo=pventa?pventa*N(u.cant):0;
     costoExtras+=costo;
     extrasFilas.push({
-      desc:`➕ <b style="color:#7a4a20">${ing.nombre}</b>`,
-      qty: `${R(u.cant)} ${ing.unidad}`,
-      precio: pventa||0,
-      subtotal: costo
+      desc:`➕ <b style="color:#7a4a20">${nombre}</b>`,
+      qty:`${R(u.cant)} ${unidad}`,
+      precio:pventa||0,
+      subtotal:costo
     });
   });
 
