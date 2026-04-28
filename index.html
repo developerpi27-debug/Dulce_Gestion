@@ -495,6 +495,24 @@ select.fc{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
         </div>
         <button class="btn btn-amber btn-block" onclick="changeScriptUrl()">🔗 Actualizar y Reconectar</button>
       </div>
+
+      <!-- Límite pedidos: developer & admin -->
+      <div class="card" id="limite-card" style="display:none;margin-top:4px">
+        <div class="card-hd">📋 Límite de Pedidos por Día <span style="font-size:.63rem;color:var(--ink3)">(Developer / Admin)</span></div>
+        <div class="fg"><label class="fl">Máximo de pedidos por día <span style="font-weight:400;color:var(--ink3)">(0 = sin límite)</span></label>
+          <input class="fc" id="cfg-limite" type="number" min="0" placeholder="0">
+        </div>
+        <div style="font-size:.7rem;color:var(--ink3)">Si el límite es 50 y ya hay 50 pedidos para una fecha, no se podrán crear más para ese día.</div>
+      </div>
+
+      <!-- WhatsApp del negocio -->
+      <div class="card" style="margin-top:4px">
+        <div class="card-hd">📱 WhatsApp del Negocio</div>
+        <div class="fg"><label class="fl">Número WhatsApp <span style="font-weight:400;color:var(--ink3)">(con código país, sin +. Ej: 18095550000)</span></label>
+          <input class="fc" id="cfg-ws" type="tel" placeholder="18095550000">
+        </div>
+        <div style="font-size:.7rem;color:var(--ink3)">Los clientes enviarán sus solicitudes y comprobantes a este número.</div>
+      </div>
     </div>
 
 
@@ -1009,10 +1027,11 @@ function hashPass(p){
 function showLogin(){
   document.getElementById('login-screen').classList.add('on');
   document.getElementById('login-negocio').textContent = CFG.nombre || 'DulceGestión';
-  // Reload CFG from Sheets config rows if available
   const cfgRows=DB.config||[];
   cfgRows.forEach(r=>{ if(r.key&&r.value!==null&&r.value!==undefined) CFG[r.key]=r.value; });
   checkLicBanner();
+  // Show public request form (only if license valid)
+  if(!isLicExpired()) setTimeout(renderPublicRequestForm, 200);
 }
 
 function checkLicBanner(){
@@ -1303,14 +1322,16 @@ function normFecha(v){
 function renderInicio(){
   const h=today(),mes=h.slice(0,7);
   const peds=DB.pedidos.map(p=>({...p,fecha:normFecha(p.fecha)}));
-  const pedHoy=peds.filter(p=>p.fecha===h&&p.estado!=='cancelado');
-  const activos=peds.filter(p=>p.estado!=='cancelado'&&p.estado!=='entregado'&&p.fecha>=h).length;
+  const pedHoy=peds.filter(p=>normFecha(p.fecha)===h&&p.estado!=='cancelado');
+  const activos=peds.filter(p=>p.estado!=='cancelado'&&p.estado!=='entregado'&&normFecha(p.fecha)>=h).length;
   // Ventas = dinero efectivamente cobrado (pagos table by received date)
   const todayPagos=(DB.pagos||[]);
   const pagosHoy=todayPagos.filter(pg=>normFecha(pg.fecha)===h);
   const pagosMesArr=todayPagos.filter(pg=>{const f=normFecha(pg.fecha);return f&&f.startsWith(mes);});
   const vHoy=pagosHoy.reduce((s,pg)=>s+N(pg.monto),0);
   const vMes=pagosMesArr.reduce((s,pg)=>s+N(pg.monto),0);
+  // Notification for new solicitudes
+  const newSols=(DB.solicitudes||[]).filter(s=>s.estado==='nueva').length;
   const cobrar=peds.filter(p=>p.estado!=='cancelado').reduce((s,p)=>s+N(p.restante),0);
   document.getElementById('sv-hoy').textContent=money(vHoy);
   document.getElementById('sv-cobrar').textContent=money(cobrar);
@@ -1337,13 +1358,16 @@ function renderInicio(){
   let html='';
   sc.forEach(i=>html+=alHTML('al-dgr','📦',`Stock crítico: ${i.nombre}`,`${R(i.cant)} ${i.unidad} — mín: ${i.min}`));
   urg.forEach(p=>html+=alHTML('al-wrn','⏰',`Entrega: ${p.cliente}`,`${p.desc} · ${fDate(normFecha(p.fecha))} ${normHora(p.hora)}`));
+  const _sols=(DB.solicitudes||[]).filter(s=>s.estado==='nueva').slice(0,2);
+  _sols.forEach(s=>html+=alHTML('al-info','📨',`Nueva solicitud: ${s.nombre}`,`${s.producto||'—'} · ${fDate(normFecha(s.fechaDeseada))||'Sin fecha'}`));
   if(!html) html=alHTML('al-ok','✅','Todo en orden','Sin alertas críticas');
   al.innerHTML=html;
 
   const _nStock=ING().filter(i=>i.cant<=i.min).length;
   const _nUrg=urgentes().length;
   const _nCobrar=PEDS_DB().filter(p=>N(p.restante)>0&&p.estado!=='cancelado').length;
-  const tot=_nStock+_nUrg+_nCobrar;
+  const _nSols=(DB.solicitudes||[]).filter(s=>s.estado==='nueva').length;
+  const tot=_nStock+_nUrg+_nCobrar+_nSols;
   const nb=document.getElementById('nbadge');
   if(nb){nb.textContent=tot||'';nb.style.display=tot?'':'none';}
 }
@@ -1635,6 +1659,10 @@ function openCobro(id){
   cm('mo-ver');om('mo-cobro');
 }
 function confirmCobro(){
+  // If we're in venta mode, delegate to venta flow
+  if(document.getElementById('cobro-content')?.dataset?.mode==='venta'){
+    confirmarCobroVenta(); return;
+  }
   const monto=N(document.getElementById('cb-monto').value);if(!monto||monto<=0){toast('❌ Monto inválido');return;}
   const metodo=document.getElementById('cb-met').value;
   const p=PEDS_DB().find(x=>x.id==cobroId);if(!p)return;
@@ -1645,6 +1673,9 @@ function confirmCobro(){
   const pago={id:uid(),pedidoId:p.id,cliente:p.cliente,monto,tipo:'cobro',fecha:today(),metodo:metodo||'Efectivo',created:new Date().toISOString()};
   DB.pagos.push(pago);syncRow('pagos','write',pago,pago.id);
   cm('mo-cobro');
+  // Reset confirm button back to confirmCobro for future pedido cobros
+  const cbBtn=document.querySelector('#mo-cobro .btn-sage');
+  if(cbBtn) cbBtn.onclick=confirmCobro;
   if(can('imprimir')&&confirm('¿Imprimir recibo de este cobro?')) generarReciboCobro(p.id,monto,metodo);
   toast('✅ Cobro registrado');renderV(CUR);
 }
@@ -2377,6 +2408,13 @@ function saveConfig(){
   const m={nombre:'nombre',eslogan:'eslogan',tel:'tel',email:'email',dir:'dir',redes:'redes',nit:'nit',moneda:'moneda',pie:'pie',condiciones:'condiciones',gracias:'gracias',prefix:'prefix',facnum:'facnum','lic-fecha':'licFecha','lic-dias':'licDias'};
   Object.entries(m).forEach(([k,v])=>{const el=document.getElementById('cfg-'+k);if(el)CFG[v]=el.value;});
   CFG.facnum=parseInt(CFG.facnum)||1;CFG.licDias=parseInt(CFG.licDias)||7;
+  // Limit and WhatsApp (only developer/admin can set limit)
+  if(can('config_limite')){
+    const lEl=document.getElementById('cfg-limite');
+    if(lEl) CFG.limitePedidos=parseInt(lEl.value)||0;
+  }
+  const wsEl=document.getElementById('cfg-ws');
+  if(wsEl) CFG.wsNumero=wsEl.value.trim();
   LS.s('dg_cfg',CFG);
   // Save to Sheets config sheet
   Object.entries(CFG).forEach(([k,v])=>{syncRow('config','write',{id:k,key:k,value:String(v),updated:new Date().toISOString()},k);});
@@ -2910,6 +2948,17 @@ function loadConfigForm(){
       if(disp) disp.textContent = SCRIPT_URL || '(no configurada)';
     }
   }
+
+  // Límite pedidos — developer & admin only
+  const limCard=document.getElementById('limite-card');
+  if(limCard){
+    limCard.style.display = can('config_limite') ? '' : 'none';
+    const lEl=document.getElementById('cfg-limite');
+    if(lEl) lEl.value = CFG.limitePedidos||0;
+  }
+  // WhatsApp
+  const wsEl=document.getElementById('cfg-ws');
+  if(wsEl) wsEl.value = CFG.wsNumero||'';
 }
 
 function renderPerfilesCfg(){
@@ -2939,6 +2988,478 @@ function addEcfBtnToPed(pedId){
   if(!can('emitir_ecf')) return '';
   return `<button class="btn btn-ghost btn-sm" onclick="abrirEcfOConfig(${pedId})">🧾 ${ECF&&ECF.rnc?'e-CF DGII':'Config ECF'}</button>`;
 }
+
+/* ═══════════════════════════════════════════════════════
+   VENTAS / PUNTO DE CAJA
+   Venta por porciones + productos sueltos (refrescos, etc.)
+═══════════════════════════════════════════════════════ */
+let ventaActiva = { items:[], cliente:'', descuento:0 };
+let ventaTab = 'activa';
+
+function tabVenta(t, el){
+  ventaTab=t;
+  document.querySelectorAll('#tabs-venta .tab').forEach(x=>x.classList.remove('on'));
+  el.classList.add('on');
+  renderVentas();
+}
+
+function abrirNuevaVenta(){
+  ventaActiva = {items:[], cliente:'', descuento:0};
+  renderVentas();
+}
+
+function renderVentas(){
+  const cont = document.getElementById('ventas-content');
+  if(ventaTab==='historial'){
+    renderVentasHistorial(cont); return;
+  }
+  // POS active sale view
+  const total = ventaActiva.items.reduce((s,i)=>s+N(i.precio)*N(i.cant),0);
+  const desc  = N(ventaActiva.descuento);
+  const totalFinal = Math.max(0, total - desc);
+
+  // Products available: catalog products (by porcion) + inventory items with precioVenta
+  const prodsCat = PRODS_DB().map(p=>({id:'p_'+p.id, nombre:p.nombre, precio:N(p.precio), tipo:'producto',cat:p.cat, ings:p.ings}));
+  const prodsInv = ING().filter(i=>N(i.precioVenta)>0).map(i=>({id:'i_'+i.id, nombre:i.nombre, precio:N(i.precioVenta), tipo:'inventario', unidad:i.unidad, ingId:i.id}));
+  const allProds = [...prodsCat,...prodsInv];
+
+  const itemsHTML = ventaActiva.items.length
+    ? ventaActiva.items.map((it,idx)=>`
+      <div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)">
+        <div style="flex:1">
+          <div style="font-size:.85rem;font-weight:700;color:var(--ink)">${it.nombre}</div>
+          <div style="font-size:.72rem;color:var(--ink3)">${money(it.precio)} c/u</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px">
+          <button onclick="cambiarCantVenta(${idx},-1)" style="background:var(--paper);border:1.5px solid var(--border2);border-radius:6px;width:28px;height:28px;cursor:pointer;font-size:1rem;display:flex;align-items:center;justify-content:center">−</button>
+          <span style="font-size:.9rem;font-weight:700;min-width:20px;text-align:center">${it.cant}</span>
+          <button onclick="cambiarCantVenta(${idx},1)" style="background:var(--paper);border:1.5px solid var(--border2);border-radius:6px;width:28px;height:28px;cursor:pointer;font-size:1rem;display:flex;align-items:center;justify-content:center">+</button>
+        </div>
+        <div style="font-size:.88rem;font-weight:700;color:var(--amber);min-width:60px;text-align:right">${money(N(it.precio)*N(it.cant))}</div>
+        <button onclick="quitarItemVenta(${idx})" style="background:rgba(192,48,42,.1);border:none;color:var(--danger);border-radius:6px;width:26px;height:26px;cursor:pointer;font-size:.8rem">✕</button>
+      </div>`).join('')
+    : `<div class="empty" style="padding:20px"><div class="empty-i">🛒</div><div class="empty-t">Agrega productos para iniciar</div></div>`;
+
+  const prodsHTML = allProds.map(p=>`
+    <button onclick="agregarItemVenta('${p.id}','${p.nombre.replace(/'/g,"\\'")}',${p.precio},'${p.tipo}','${p.ingId||''}')"
+      style="background:var(--paper3);border:1.5px solid var(--border);border-radius:var(--r8);padding:8px 10px;cursor:pointer;text-align:left;transition:all .15s;width:100%">
+      <div style="font-size:.8rem;font-weight:700;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.nombre}</div>
+      <div style="font-size:.72rem;color:var(--amber);font-weight:700;margin-top:2px">${money(p.precio)}${p.unidad?' /'+p.unidad:''}</div>
+      <div style="font-size:.64rem;color:var(--ink3)">${p.tipo==='inventario'?'📦 Producto/Inventario':'🎂 '+p.cat}</div>
+    </button>`).join('');
+
+  cont.innerHTML = `
+    <div class="card" style="margin-bottom:10px">
+      <div class="card-hd">🛍 Carrito</div>
+      <div class="fg"><label class="fl">Cliente (opcional)</label>
+        <input class="fc" id="venta-cliente" value="${ventaActiva.cliente||''}" placeholder="Nombre del cliente" oninput="ventaActiva.cliente=this.value" style="font-size:.84rem;padding:8px 10px">
+      </div>
+      ${itemsHTML}
+      ${ventaActiva.items.length?`
+      <div class="divider"></div>
+      <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
+        <label style="font-size:.75rem;font-weight:700;color:var(--ink3)">Descuento ($):</label>
+        <input type="number" value="${ventaActiva.descuento||0}" min="0" oninput="ventaActiva.descuento=N(this.value);renderVentas()" style="padding:6px 9px;border:1.5px solid var(--border2);border-radius:8px;font-size:.82rem;width:90px;background:var(--paper2);outline:none">
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0 4px;border-top:2px solid var(--border2);margin-top:8px">
+        <span style="font-family:Georgia,serif;font-size:1.2rem;font-weight:700;color:var(--ink)">TOTAL: ${money(totalFinal)}</span>
+        ${desc>0?`<span style="font-size:.75rem;color:var(--ok)">Descuento: -${money(desc)}</span>`:''}
+      </div>
+      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+        <button class="btn btn-amber" onclick="cobrarVenta()">💰 Cobrar ${money(totalFinal)}</button>
+        <button class="btn btn-ghost btn-sm" onclick="ventaActiva={items:[],cliente:'',descuento:0};renderVentas()">🗑 Cancelar</button>
+      </div>`:''}
+    </div>
+    <div class="card">
+      <div class="card-hd">➕ Agregar producto</div>
+      <input class="fc" id="venta-buscar" placeholder="🔍 Buscar producto..." oninput="filtrarProdsVenta(this.value)" style="margin-bottom:10px;font-size:.84rem">
+      <div id="venta-prods-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:7px">${prodsHTML}</div>
+    </div>`;
+}
+
+function filtrarProdsVenta(q){
+  const prodsCat = PRODS_DB().map(p=>({id:'p_'+p.id,nombre:p.nombre,precio:N(p.precio),tipo:'producto',cat:p.cat,ingId:''}));
+  const prodsInv = ING().filter(i=>N(i.precioVenta)>0).map(i=>({id:'i_'+i.id,nombre:i.nombre,precio:N(i.precioVenta),tipo:'inventario',unidad:i.unidad,ingId:i.id}));
+  const all=[...prodsCat,...prodsInv];
+  const filtered = q ? all.filter(p=>p.nombre.toLowerCase().includes(q.toLowerCase())) : all;
+  const grid = document.getElementById('venta-prods-grid'); if(!grid) return;
+  grid.innerHTML = filtered.map(p=>`
+    <button onclick="agregarItemVenta('${p.id}','${p.nombre.replace(/'/g,"\\'")}',${p.precio},'${p.tipo}','${p.ingId||''}')"
+      style="background:var(--paper3);border:1.5px solid var(--border);border-radius:var(--r8);padding:8px 10px;cursor:pointer;text-align:left;width:100%">
+      <div style="font-size:.8rem;font-weight:700;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.nombre}</div>
+      <div style="font-size:.72rem;color:var(--amber);font-weight:700;margin-top:2px">${money(p.precio)}${p.unidad?' /'+p.unidad:''}</div>
+      <div style="font-size:.64rem;color:var(--ink3)">${p.tipo==='inventario'?'📦 Producto':'🎂 '+p.cat}</div>
+    </button>`).join('');
+}
+
+function agregarItemVenta(id, nombre, precio, tipo, ingId){
+  const existing = ventaActiva.items.find(i=>i.id===id);
+  if(existing){ existing.cant++; }
+  else { ventaActiva.items.push({id, nombre, precio:N(precio), cant:1, tipo, ingId}); }
+  renderVentas();
+}
+
+function cambiarCantVenta(idx, delta){
+  const item = ventaActiva.items[idx]; if(!item) return;
+  item.cant = Math.max(1, item.cant + delta);
+  renderVentas();
+}
+
+function quitarItemVenta(idx){
+  ventaActiva.items.splice(idx,1);
+  renderVentas();
+}
+
+function cobrarVenta(){
+  if(!ventaActiva.items.length){ toast('❌ Agrega al menos un producto'); return; }
+  const total = ventaActiva.items.reduce((s,i)=>s+N(i.precio)*N(i.cant),0);
+  const desc  = N(ventaActiva.descuento);
+  const totalFinal = Math.max(0, total - desc);
+  // Show cobro modal
+  const metSelect = ['Efectivo','Transferencia','Tarjeta','Otro'].map(m=>`<option>${m}</option>`).join('');
+  const cont = document.getElementById('cobro-content');
+  if(cont){
+    cont.innerHTML=`
+      <div style="font-family:Georgia,serif;font-size:1.35rem;color:var(--amber);margin-bottom:12px">Total: ${money(totalFinal)}</div>
+      <div style="font-size:.85rem;color:var(--ink2);margin-bottom:12px">${ventaActiva.items.map(i=>`${i.cant}× ${i.nombre}`).join(', ')}</div>
+      <div class="fg"><label class="fl">Método de pago</label><select class="fc" id="venta-metodo">${metSelect}</select></div>
+      <div class="fg"><label class="fl">Monto recibido ($)</label><input class="fc" id="venta-recibido" type="number" value="${totalFinal.toFixed(2)}" oninput="calcCambio()"></div>
+      <div id="venta-cambio" style="font-size:.85rem;color:var(--ok);font-weight:700;margin-top:6px"></div>`;
+    // Override confirm button for this flow
+    document.getElementById('cobro-content').dataset.mode='venta';
+    calcCambio();
+    om('mo-cobro');
+    // Override the confirm button
+    const btn=document.querySelector('#mo-cobro .btn-sage');
+    if(btn) btn.onclick=confirmarCobroVenta;
+  }
+}
+
+function calcCambio(){
+  const total = ventaActiva.items.reduce((s,i)=>s+N(i.precio)*N(i.cant),0) - N(ventaActiva.descuento);
+  const rec = N(document.getElementById('venta-recibido')?.value)||0;
+  const cambio = rec - total;
+  const el = document.getElementById('venta-cambio');
+  if(el) el.textContent = rec>0&&cambio>=0 ? `💵 Cambio: ${money(cambio)}` : '';
+}
+
+async function confirmarCobroVenta(){
+  const metodo = document.getElementById('venta-metodo')?.value||'Efectivo';
+  const total = ventaActiva.items.reduce((s,i)=>s+N(i.precio)*N(i.cant),0) - N(ventaActiva.descuento);
+  const v = {
+    id: uid(), cliente: ventaActiva.cliente||'Mostrador',
+    items: JSON.stringify(ventaActiva.items),
+    total: total, descuento: N(ventaActiva.descuento),
+    metodo, fecha: today(), hora: new Date().toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit'}),
+    created: new Date().toISOString()
+  };
+  DB.ventas.push(v);
+  syncRow('ventas','write',v,v.id);
+
+  // Registrar pago
+  const pg={id:uid(),pedidoId:v.id,cliente:v.cliente,monto:total,tipo:'venta-caja',fecha:today(),metodo,created:new Date().toISOString()};
+  DB.pagos.push(pg); syncRow('pagos','write',pg,pg.id);
+
+  // Descontar inventario
+  const movs=[];
+  for(const item of ventaActiva.items){
+    if(item.tipo==='inventario'&&item.ingId){
+      const ing=ING().find(i=>i.id==item.ingId);
+      if(ing){
+        ing.cant=Math.max(0,ing.cant-item.cant);
+        syncRow('inventario','update',ing,ing.id);
+        movs.push({id:uid(),tipo:'salida',nombre:ing.nombre,cant:item.cant,costo:0,notas:`Venta caja — ${v.cliente}`,fecha:new Date().toISOString(),ref:String(v.id)});
+      }
+    } else if(item.tipo==='producto'){
+      // Descontar ingredientes de la receta del producto
+      const pid = item.id.replace('p_','');
+      const prod = PRODS_DB().find(p=>p.id==pid);
+      if(prod){
+        const ings=Array.isArray(prod.ings)?prod.ings:(typeof prod.ings==='string'?JSON.parse(prod.ings||'[]'):[]);
+        ings.forEach(u=>{
+          const ing=ING().find(i=>i.id==u.iid);
+          if(!ing) return;
+          const consume=N(u.cant)*item.cant;
+          ing.cant=Math.max(0,ing.cant-consume);
+          syncRow('inventario','update',ing,ing.id);
+          movs.push({id:uid(),tipo:'salida',nombre:ing.nombre,cant:consume,costo:0,notas:`Venta caja — ${prod.nombre} ×${item.cant}`,fecha:new Date().toISOString(),ref:String(v.id)});
+        });
+      }
+    }
+  }
+  movs.forEach(m=>{DB.movimientos.push(m);syncRow('movimientos','write',m,m.id);});
+
+  cm('mo-cobro');
+  toast(`✅ Venta registrada — ${money(total)}`);
+
+  // Ask to print receipt
+  if(can('imprimir')&&confirm('¿Imprimir recibo de venta?')) imprimirReciboVenta(v);
+
+  ventaActiva={items:[],cliente:'',descuento:0};
+  renderVentas();
+}
+
+function imprimirReciboVenta(v){
+  const items=Array.isArray(v.items)?v.items:(typeof v.items==='string'?JSON.parse(v.items||'[]'):[]);
+  const num=nextFacNum();
+  const fecha=new Date().toLocaleDateString('es',{day:'2-digit',month:'2-digit',year:'numeric'});
+  const filas=items.map(i=>({desc:`<b>${i.nombre}</b>`,qty:i.cant,precio:i.precio,subtotal:N(i.precio)*N(i.cant)}));
+  const totLines=[
+    ...(N(v.descuento)>0?[{label:'Subtotal:',valor:money(N(v.total)+N(v.descuento))},{label:'Descuento:',valor:`-${money(v.descuento)}`}]:[]),
+    {label:'<b>TOTAL:</b>',valor:`<b>${money(v.total)}</b>`,highlight:true},
+    {label:'Método:',valor:v.metodo||'Efectivo'},
+  ];
+  const html=facHeader('Recibo de Venta',num,fecha)+
+    `<div style="background:#fdf5e9;border-radius:8px;padding:9px 11px;margin-bottom:12px;border:1px solid rgba(100,60,20,.15)">
+      <div style="font-size:13px;font-weight:700;color:#1c0f00">${v.cliente||'Mostrador'}</div>
+      <div style="font-size:11px;color:#555">📅 ${fecha} ${v.hora?'· '+v.hora:''}</div>
+    </div>`+
+    facTabla(filas)+facTotales(totLines)+facPie('');
+  showFactura('Recibo de Venta',html);
+}
+
+function renderVentasHistorial(cont){
+  const ventas=[...DB.ventas].sort((a,b)=>String(b.created||'').localeCompare(String(a.created||''))).slice(0,60);
+  if(!ventas.length){cont.innerHTML=`<div class="empty"><div class="empty-i">🧾</div><div class="empty-t">Sin ventas registradas</div></div>`;return;}
+  cont.innerHTML=`<div class="card"><div class="card-hd">🧾 Historial de ventas</div>`+
+    ventas.map(v=>{
+      const items=Array.isArray(v.items)?v.items:(typeof v.items==='string'?JSON.parse(v.items||'[]'):[]);
+      return`<div class="li">
+        <div class="la bg-a">🛒</div>
+        <div class="lb"><div class="lt">${v.cliente||'Mostrador'}</div>
+          <div class="ls">${items.map(i=>`${i.cant}×${i.nombre}`).join(', ')} · ${fDate(normFecha(v.fecha))}</div>
+        </div>
+        <div class="lm">
+          <div class="lamt">${money(v.total)}</div>
+          <div style="font-size:.68rem;color:var(--ink3)">${v.metodo||''}</div>
+          ${can('imprimir')?`<button onclick="imprimirReciboVenta(DB.ventas.find(x=>x.id==${v.id}||x.id==='${v.id}'))" style="background:none;border:none;color:var(--amber);cursor:pointer;font-size:.75rem">🖨</button>`:''}
+        </div>
+      </div>`;
+    }).join('')+`</div>`;
+}
+
+/* ═══════════════════════════════════════════════════════
+   SOLICITUDES DE CLIENTES
+═══════════════════════════════════════════════════════ */
+function renderSolicitudes(){
+  const filtro = document.getElementById('sol-filtro')?.value||'';
+  const list = [...DB.solicitudes]
+    .filter(s=>!filtro||s.estado===filtro)
+    .sort((a,b)=>String(b.created||'').localeCompare(String(a.created||'')));
+  const cont = document.getElementById('solicitudes-list');
+  if(!list.length){
+    cont.innerHTML=`<div class="empty"><div class="empty-i">📨</div><div class="empty-t">${filtro?'Sin solicitudes con ese estado':'Sin solicitudes aún'}</div></div>`;
+    return;
+  }
+  const estColor={nueva:'b-pend',revisada:'b-proc',aceptada:'b-list',rechazada:'b-canc'};
+  cont.innerHTML=`<div class="card"><div style="padding:0">`+
+    list.map(s=>`<div class="li" onclick="verSolicitud('${s.id}')" style="cursor:pointer">
+      <div class="la bg-e">📨</div>
+      <div class="lb">
+        <div class="lt">${s.nombre} · ${s.telefono||'—'}</div>
+        <div class="ls">${s.producto||'Sin producto'} · ${fDate(normFecha(s.fechaDeseada))||'Sin fecha'}</div>
+      </div>
+      <div class="lm">
+        <div class="badge ${estColor[s.estado]||'b-pend'}">${s.estado||'nueva'}</div>
+        <div style="font-size:.7rem;color:var(--ink3);margin-top:2px">${fDate(normFecha(s.created?.slice(0,10)||today()))}</div>
+      </div>
+    </div>`).join('')+`</div></div>`;
+}
+
+function verSolicitud(id){
+  const s=DB.solicitudes.find(x=>x.id==id||x.id===id); if(!s) return;
+  const estOpts=['nueva','revisada','aceptada','rechazada'].map(e=>`<option value="${e}"${s.estado===e?' selected':''}>${e}</option>`).join('');
+  const html=`
+    <div class="card" style="margin-bottom:10px">
+      <div class="card-hd">👤 Cliente</div>
+      <div style="font-family:Georgia,serif;font-size:1.1rem;color:var(--ink)">${s.nombre}</div>
+      ${s.telefono?`<div style="font-size:.8rem;color:var(--ink3)">📞 ${s.telefono}</div>`:''}
+      ${s.email?`<div style="font-size:.8rem;color:var(--ink3)">✉️ ${s.email}</div>`:''}
+    </div>
+    <div class="card" style="margin-bottom:10px">
+      <div class="card-hd">📋 Solicitud</div>
+      <div style="font-size:.9rem;font-weight:700;color:var(--ink)">${s.producto||'—'}</div>
+      <div style="font-size:.8rem;color:var(--ink2);margin-top:4px">Cantidad: ${s.cantidad||1}</div>
+      <div style="font-size:.8rem;color:var(--ink2)">Fecha deseada: <b>${fDate(normFecha(s.fechaDeseada))||'Sin especificar'}</b></div>
+      ${s.hora?`<div style="font-size:.8rem;color:var(--ink2)">Hora: ${s.hora}</div>`:''}
+      ${s.presupuesto?`<div style="font-size:.8rem;color:var(--amber);font-weight:700">Presupuesto: ${money(s.presupuesto)}</div>`:''}
+      ${s.notas?`<div style="font-size:.8rem;color:var(--ink2);margin-top:6px;background:var(--paper);padding:7px;border-radius:8px">${s.notas}</div>`:''}
+    </div>
+    <div class="fg"><label class="fl">Estado</label>
+      <select class="fc" id="sol-estado-edit">${estOpts}</select>
+    </div>
+    <div class="fg"><label class="fl">Notas internas</label>
+      <textarea class="fc" id="sol-notas-int" rows="2" placeholder="Notas para el equipo...">${s.notasInternas||''}</textarea>
+    </div>
+    <div style="display:flex;gap:7px;flex-wrap:wrap;margin-top:4px">
+      <button class="btn btn-amber btn-sm" onclick="guardarEstadoSolicitud('${s.id}')">💾 Guardar estado</button>
+      ${can('crear_pedidos')?`<button class="btn btn-sage btn-sm" onclick="solAPedido('${s.id}')">📦 Crear Pedido</button>`:''}
+      <button class="btn btn-ghost btn-sm" onclick="cm('mo-sol-ver')">Cerrar</button>
+    </div>`;
+  // Show in a modal
+  document.getElementById('sol-modal-content').innerHTML=html;
+  document.getElementById('sol-modal-solId').value=s.id;
+  om('mo-sol-ver');
+}
+
+function guardarEstadoSolicitud(id){
+  const s=DB.solicitudes.find(x=>x.id==id||x.id===id); if(!s) return;
+  s.estado=document.getElementById('sol-estado-edit')?.value||s.estado;
+  s.notasInternas=document.getElementById('sol-notas-int')?.value||'';
+  s.updated=new Date().toISOString();
+  syncRow('solicitudes','update',s,s.id);
+  cm('mo-sol-ver'); toast('✅ Solicitud actualizada'); renderSolicitudes();
+}
+
+function solAPedido(id){
+  const s=DB.solicitudes.find(x=>x.id==id||x.id===id); if(!s) return;
+  cm('mo-sol-ver');
+  resetPedForm();
+  document.getElementById('f-cli').value=s.nombre;
+  document.getElementById('f-tel').value=s.telefono||'';
+  document.getElementById('f-desc').value=s.producto||'';
+  document.getElementById('f-qty').value=s.cantidad||1;
+  if(s.fechaDeseada) document.getElementById('f-fecha').value=normFecha(s.fechaDeseada);
+  if(s.hora) document.getElementById('f-hora').value=s.hora;
+  if(s.presupuesto) document.getElementById('f-total').value=s.presupuesto;
+  document.getElementById('f-notas').value=s.notas||'';
+  om('mo-ped');
+  toast('📦 Solicitud cargada como pedido');
+}
+
+/* ═══════════════════════════════════════════════════════
+   FORMULARIO PÚBLICO DE SOLICITUD (pre-login)
+   Se muestra debajo del formulario de login
+═══════════════════════════════════════════════════════ */
+function renderPublicRequestForm(){
+  const loginBox = document.querySelector('#login-screen .login-box');
+  if(!loginBox) return;
+  // Check license before showing
+  if(isLicExpired()){return;} // Don't show if expired
+  // Add toggle button and form if not already added
+  if(document.getElementById('pub-req-section')) return;
+  const sec = document.createElement('div');
+  sec.id='pub-req-section';
+  sec.style.cssText='margin-top:16px;padding-top:14px;border-top:1px solid var(--border)';
+  sec.innerHTML=`
+    <div style="text-align:center;margin-bottom:10px">
+      <button onclick="togglePubForm()" class="btn btn-ghost btn-sm" style="font-size:.78rem">
+        🧁 ¿Quieres hacer un pedido? <span id="pub-toggle-lbl">Ver formulario ▾</span>
+      </button>
+    </div>
+    <div id="pub-form-wrap" style="display:none">
+      <div style="font-family:Georgia,serif;font-size:1rem;font-weight:600;color:var(--amber);text-align:center;margin-bottom:12px">
+        Solicitud de Pedido — ${CFG.nombre||'DulceGestión'}
+      </div>
+      <div class="fg"><label class="fl">Tu nombre *</label><input class="fc" id="pub-nombre" placeholder="Nombre completo"></div>
+      <div class="fg"><label class="fl">Teléfono / WhatsApp *</label><input class="fc" id="pub-tel" type="tel" placeholder="+1 809 000 0000"></div>
+      <div class="fg"><label class="fl">Correo (opcional)</label><input class="fc" id="pub-email" type="email" placeholder="correo@email.com"></div>
+      <div class="fg"><label class="fl">¿Qué deseas ordenar? *</label>
+        <select class="fc" id="pub-producto">
+          <option value="">— Selecciona un producto —</option>
+          ${PRODS_DB().map(p=>`<option value="${p.nombre}">${p.nombre} — ${money(p.precio)}</option>`).join('')}
+          <option value="otro">Otro / personalizado</option>
+        </select>
+      </div>
+      <div class="fg"><label class="fl">Descripción / personalización</label>
+        <textarea class="fc" id="pub-desc" rows="2" placeholder="Detalla colores, sabores, dedicatoria, etc."></textarea>
+      </div>
+      <div class="fr2">
+        <div class="fg"><label class="fl">Cantidad</label><input class="fc" id="pub-cant" type="number" min="1" value="1"></div>
+        <div class="fg"><label class="fl">Presupuesto aprox. ($)</label><input class="fc" id="pub-presupuesto" type="number" placeholder="0"></div>
+      </div>
+      <div class="fr2">
+        <div class="fg"><label class="fl">Fecha deseada</label><input class="fc" id="pub-fecha" type="date"></div>
+        <div class="fg"><label class="fl">Hora deseada</label><input class="fc" id="pub-hora" type="time" value="10:00"></div>
+      </div>
+      <div class="fg"><label class="fl">Notas adicionales</label>
+        <textarea class="fc" id="pub-notas" rows="2" placeholder="Alergias, instrucciones especiales..."></textarea>
+      </div>
+      <button class="btn btn-amber btn-block" onclick="enviarSolicitudPublica()">📨 Enviar Solicitud por WhatsApp</button>
+      <div id="pub-msg" style="font-size:.75rem;text-align:center;margin-top:8px;color:var(--ok)"></div>
+    </div>`;
+  loginBox.appendChild(sec);
+}
+
+function togglePubForm(){
+  const wrap=document.getElementById('pub-form-wrap');
+  const lbl=document.getElementById('pub-toggle-lbl');
+  if(!wrap) return;
+  const open=wrap.style.display==='none';
+  wrap.style.display=open?'block':'none';
+  lbl.textContent=open?'Ocultar ▴':'Ver formulario ▾';
+}
+
+function enviarSolicitudPublica(){
+  const nombre=document.getElementById('pub-nombre')?.value.trim();
+  const tel=document.getElementById('pub-tel')?.value.trim();
+  const producto=document.getElementById('pub-producto')?.value||'';
+  const desc=document.getElementById('pub-desc')?.value.trim();
+  if(!nombre||!tel){document.getElementById('pub-msg').textContent='❌ Nombre y teléfono son requeridos';document.getElementById('pub-msg').style.color='var(--danger)';return;}
+  if(!producto){document.getElementById('pub-msg').textContent='❌ Selecciona un producto';document.getElementById('pub-msg').style.color='var(--danger)';return;}
+
+  const sol={
+    id:uid(), nombre, telefono:tel,
+    email:document.getElementById('pub-email')?.value.trim()||'',
+    producto:producto==='otro'?(desc||'Personalizado'):producto,
+    notas:desc||'',
+    cantidad:parseInt(document.getElementById('pub-cant')?.value)||1,
+    presupuesto:N(document.getElementById('pub-presupuesto')?.value)||0,
+    fechaDeseada:document.getElementById('pub-fecha')?.value||'',
+    hora:document.getElementById('pub-hora')?.value||'',
+    estado:'nueva', notasInternas:'',
+    created:new Date().toISOString()
+  };
+
+  // Save to DB and Sheets
+  DB.solicitudes.push(sol);
+  syncRow('solicitudes','write',sol,sol.id);
+
+  // Build WhatsApp message
+  const prodNombre=sol.producto;
+  const msg=encodeURIComponent(
+    `🧁 *SOLICITUD DE PEDIDO — ${CFG.nombre||'DulceGestión'}*\n\n`+
+    `👤 *Cliente:* ${sol.nombre}\n`+
+    `📞 *Teléfono:* ${sol.telefono}\n`+
+    (sol.email?`✉️ *Email:* ${sol.email}\n`:'')+
+    `\n🎂 *Producto:* ${prodNombre}\n`+
+    `📦 *Cantidad:* ${sol.cantidad}\n`+
+    (sol.presupuesto?`💰 *Presupuesto:* ${money(sol.presupuesto)}\n`:'')+
+    (sol.fechaDeseada?`📅 *Fecha deseada:* ${fDate(sol.fechaDeseada)}\n`:'')+
+    (sol.hora?`⏰ *Hora:* ${sol.hora}\n`:'')+
+    (sol.notas?`\n📝 *Notas:* ${sol.notas}\n`:'')+
+    `\n_Por favor adjunta tu comprobante de pago del anticipo para confirmar el pedido._\n`+
+    `_Solicitud enviada desde DulceGestión App_`
+  );
+  const ws=CFG.wsNumero||'';
+  if(ws){
+    window.open(`https://wa.me/${ws}?text=${msg}`,'_blank');
+    document.getElementById('pub-msg').textContent='✅ Solicitud guardada. Se abrirá WhatsApp para enviar.';
+    document.getElementById('pub-msg').style.color='var(--ok)';
+    // Clear form
+    ['pub-nombre','pub-tel','pub-email','pub-desc','pub-notas','pub-presupuesto','pub-fecha'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
+    document.getElementById('pub-producto').value='';
+    document.getElementById('pub-cant').value='1';
+  } else {
+    document.getElementById('pub-msg').textContent='✅ Solicitud guardada. Configura el número de WhatsApp en Configuración.';
+    document.getElementById('pub-msg').style.color='var(--warn)';
+  }
+}
+
+/* ═══════════════════════════════════════════════════════
+   INVENTARIO — rename labels to Ingredientes/Productos
+═══════════════════════════════════════════════════════ */
+// The "tipo" field on inventario items: 'ingrediente' (default) or 'producto'
+// Already handled — precioVenta > 0 means it shows as a sellable product in caja
+
 </script>
+
+<!-- ════════ MODAL: VER SOLICITUD ════════ -->
+<div class="mo" id="mo-sol-ver"><div class="mbox">
+  <div class="mh"><h3>📨 Detalle de Solicitud</h3><button class="mclose" onclick="cm('mo-sol-ver')">✕</button></div>
+  <input type="hidden" id="sol-modal-solId">
+  <div id="sol-modal-content"></div>
+</div></div>
+
 </body>
 </html>
