@@ -271,8 +271,8 @@ select.fc{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
 </div>
 
 <!-- LOGIN SCREEN -->
-<div id="login-screen">
-  <div class="login-box">
+<div id="login-screen" style="overflow-y:auto;align-items:flex-start;padding:20px 16px;">
+  <div class="login-box" style="width:100%;max-width:400px;margin:0 auto;">
     <div style="font-size:2.2rem;text-align:center;margin-bottom:6px">🧁</div>
     <div class="login-logo" id="login-negocio">DulceGestión</div>
     <div class="login-brand">ACCESO AL SISTEMA</div>
@@ -304,7 +304,8 @@ select.fc{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
         <div class="tb-avatar" id="tb-av">👤</div>
         <span class="tb-uname" id="tb-uname">—</span>
       </div>
-      <button class="tb-notif" onclick="sv('alertas')">🔔<span class="tb-badge" id="nbadge" style="display:none">0</span></button>
+      <button class="tb-notif" onclick="sv('alertas')" title="Alertas">🔔<span class="tb-badge" id="nbadge" style="display:none">0</span></button>
+      <button class="tb-notif" onclick="sv('config')" title="Configuración" style="font-size:.85rem">⚙️</button>
     </div>
   </div>
 
@@ -496,6 +497,13 @@ select.fc{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
         <button class="btn btn-amber btn-block" onclick="changeScriptUrl()">🔗 Actualizar y Reconectar</button>
       </div>
 
+      <!-- Usuarios shortcut (developer only) -->
+      <div class="card" id="cfg-users-shortcut" style="display:none;margin-top:4px">
+        <div class="card-hd">👥 Gestión de Usuarios <span style="font-size:.63rem;color:var(--ink3)">(solo Developer)</span></div>
+        <p style="font-size:.78rem;color:var(--ink2);margin-bottom:10px">Crea, edita y desactiva usuarios del sistema.</p>
+        <button class="btn btn-blue btn-sm btn-block" onclick="cm('mo-ver');sv('usuarios')">👥 Ir a Gestión de Usuarios</button>
+      </div>
+
       <!-- Límite pedidos: developer & admin -->
       <div class="card" id="limite-card" style="display:none;margin-top:4px">
         <div class="card-hd">📋 Límite de Pedidos por Día <span style="font-size:.63rem;color:var(--ink3)">(Developer / Admin)</span></div>
@@ -526,6 +534,30 @@ select.fc{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
         <button class="tab" onclick="tabVenta('historial',this)">Historial</button>
       </div>
       <div id="ventas-content"></div>
+    </div>
+
+    <!-- ══════════ CUENTAS POR PAGAR ══════════ -->
+    <div class="vw" id="vw-cxp">
+      <div class="shd"><h3>💳 Cuentas por Pagar</h3><button class="btn btn-amber btn-sm" onclick="openCXP(null)">+ Nueva</button></div>
+      <div id="cxp-resumen" style="margin-bottom:10px"></div>
+      <div class="tabs" id="tabs-cxp">
+        <button class="tab on" onclick="tabCX('cxp','pendiente',this)">Pendientes</button>
+        <button class="tab" onclick="tabCX('cxp','parcial',this)">Parciales</button>
+        <button class="tab" onclick="tabCX('cxp','pagada',this)">Pagadas</button>
+      </div>
+      <div id="cxp-list"></div>
+    </div>
+
+    <!-- ══════════ CUENTAS POR COBRAR ══════════ -->
+    <div class="vw" id="vw-cxc">
+      <div class="shd"><h3>💰 Cuentas por Cobrar</h3><button class="btn btn-amber btn-sm" onclick="openCXC(null)">+ Nueva</button></div>
+      <div id="cxc-resumen" style="margin-bottom:10px"></div>
+      <div class="tabs" id="tabs-cxc">
+        <button class="tab on" onclick="tabCX('cxc','pendiente',this)">Pendientes</button>
+        <button class="tab" onclick="tabCX('cxc','parcial',this)">Parciales</button>
+        <button class="tab" onclick="tabCX('cxc','pagada',this)">Cobradas</button>
+      </div>
+      <div id="cxc-list"></div>
     </div>
 
     <!-- ══════════ SOLICITUDES ══════════ -->
@@ -689,8 +721,14 @@ select.fc{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
 
 <!-- Ingrediente -->
 <div class="mo" id="mo-ing"><div class="mbox">
-  <div class="mh"><h3 id="ing-titulo">Ingrediente</h3><button class="mclose" onclick="cm('mo-ing')">✕</button></div>
-  <div class="fg"><label class="fl">Nombre *</label><input class="fc" id="i-nombre" placeholder="Ej: Harina de trigo"></div>
+  <div class="mh"><h3 id="ing-titulo">Ingrediente / Producto</h3><button class="mclose" onclick="cm('mo-ing')">✕</button></div>
+  <div class="fg"><label class="fl">Tipo *</label>
+    <select class="fc" id="i-tipo">
+      <option value="ingrediente">🧂 Ingrediente (uso en recetas)</option>
+      <option value="producto">📦 Producto (venta directa, refresco, etc.)</option>
+    </select>
+  </div>
+  <div class="fg"><label class="fl">Nombre *</label><input class="fc" id="i-nombre" placeholder="Ej: Harina de trigo / Refresco Cola 355ml"></div>
   <div class="fr2">
     <div class="fg"><label class="fl">Cantidad actual</label><input class="fc" id="i-cant" type="number" step="0.001" placeholder="0"></div>
     <div class="fg"><label class="fl">Unidad</label>
@@ -829,29 +867,37 @@ const ALL_PERMS = [
   {id:'ver_solicitudes',   label:'Ver Solicitudes Clientes'},
   {id:'gestionar_solicitudes', label:'Gestionar Solicitudes'},
   {id:'config_limite',     label:'Config Límite Pedidos/Día'},
+  {id:'ver_cxp',           label:'Ver Cuentas x Pagar'},
+  {id:'gestionar_cxp',     label:'Gestionar Cuentas x Pagar'},
+  {id:'ver_cxc',           label:'Ver Cuentas x Cobrar'},
+  {id:'gestionar_cxc',     label:'Gestionar Cuentas x Cobrar'},
 ];
 
 const PERM_DEFAULTS = {
   developer: ALL_PERMS.map(p=>p.id), // all
-  admin: ALL_PERMS.filter(p=>!['gestionar_perfiles','cambiar_url'].includes(p.id)).map(p=>p.id),
+  admin: ALL_PERMS.map(p=>p.id).filter(p=>!['gestionar_perfiles','cambiar_url'].includes(p)),
   caja: ['ver_inicio','ver_pedidos','crear_pedidos','editar_pedidos','cancelar_pedidos','cobrar','imprimir','ver_cotizaciones','crear_cotizaciones','ver_calendario','ver_alertas','ver_ventas','crear_ventas','ver_solicitudes','gestionar_solicitudes'],
   preparacion: ['ver_inicio','ver_pedidos','marcar_proceso','marcar_listo','ver_calendario','ver_alertas'],
 };
 
+// NAV_ITEMS_ALL — defines ALL navigable views
+// navInBottom: false = only accessible from topbar config menu, not bottom nav
 const NAV_ITEMS_ALL = [
-  {id:'inicio',       icon:'🏠', label:'Inicio',    perm:'ver_inicio'},
-  {id:'pedidos',      icon:'📦', label:'Pedidos',   perm:'ver_pedidos'},
-  {id:'inventario',   icon:'🏷', label:'Inventario',perm:'ver_inventario'},
-  {id:'recetas',      icon:'🎂', label:'Recetas',   perm:'ver_recetas'},
-  {id:'cotizaciones', icon:'📋', label:'Cotizar',   perm:'ver_cotizaciones'},
-  {id:'reportes',     icon:'📊', label:'Reportes',  perm:'ver_reportes'},
-  {id:'calendario',   icon:'🗓', label:'Agenda',    perm:'ver_calendario'},
-  {id:'alertas',      icon:'🔔', label:'Alertas',   perm:'ver_alertas'},
-  {id:'usuarios',     icon:'👥', label:'Usuarios',  perm:'__developer'},
-  {id:'perfiles',     icon:'🔐', label:'Perfiles',  perm:'__developer'},
-  {id:'ventas',        icon:'🛒', label:'Caja',      perm:'ver_ventas'},
-  {id:'solicitudes',   icon:'📨', label:'Solicitudes',perm:'ver_solicitudes'},
-  {id:'config',        icon:'⚙️', label:'Config',    perm:'ver_config'},
+  {id:'inicio',       icon:'🏠', label:'Inicio',        perm:'ver_inicio',        navInBottom:true},
+  {id:'ventas',       icon:'🛒', label:'Caja',           perm:'ver_ventas',        navInBottom:true},
+  {id:'solicitudes',  icon:'📨', label:'Solicitudes',    perm:'ver_solicitudes',   navInBottom:true},
+  {id:'pedidos',      icon:'📦', label:'Pedidos',        perm:'ver_pedidos',       navInBottom:true},
+  {id:'inventario',   icon:'🏷', label:'Inventario',     perm:'ver_inventario',    navInBottom:true},
+  {id:'recetas',      icon:'🎂', label:'Recetas',        perm:'ver_recetas',       navInBottom:true},
+  {id:'cotizaciones', icon:'📋', label:'Cotizar',        perm:'ver_cotizaciones',  navInBottom:true},
+  {id:'reportes',     icon:'📊', label:'Reportes',       perm:'ver_reportes',      navInBottom:true},
+  {id:'calendario',   icon:'🗓', label:'Agenda',         perm:'ver_calendario',    navInBottom:true},
+  {id:'alertas',      icon:'🔔', label:'Alertas',        perm:'ver_alertas',       navInBottom:false},
+  {id:'usuarios',     icon:'👥', label:'Usuarios',       perm:'__developer',       navInBottom:false},
+  {id:'perfiles',     icon:'🔐', label:'Perfiles',       perm:'__developer',       navInBottom:false},
+  {id:'config',       icon:'⚙️', label:'Configuración',  perm:'ver_config',        navInBottom:false},
+  {id:'cxp',          icon:'💳', label:'Ctas x Pagar',   perm:'ver_cxp',           navInBottom:true},
+  {id:'cxc',          icon:'💰', label:'Ctas x Cobrar',  perm:'ver_cxc',           navInBottom:true},
 ];
 
 /* ═══════════════════════════════════════════════════════
@@ -867,7 +913,8 @@ const LS = {
 ═══════════════════════════════════════════════════════ */
 let DB = {
   config:[],usuarios:[],perfiles:[],pedidos:[],inventario:[],
-  productos:[],movimientos:[],cotizaciones:[],gastos:[],pagos:[],ventas:[],solicitudes:[]
+  productos:[],movimientos:[],cotizaciones:[],gastos:[],pagos:[],ventas:[],solicitudes:[],
+  extras_pedidos:[],cxp:[],cxc:[]
 };
 let CFG = LS.g('dg_cfg',{ nombre:'DulceGestión', eslogan:'', tel:'', email:'', dir:'', redes:'', nit:'', moneda:'Q', pie:'Gracias por su preferencia.', condiciones:'50% anticipo, saldo contra entrega.', gracias:'¡Gracias por confiar en nosotros!', prefix:'FAC-', facnum:1, licFecha:'', licDias:7, limitePedidos:0, wsNumero:'' });
 let SCRIPT_URL = LS.g('dg_url','');
@@ -1158,6 +1205,7 @@ function bootApp(){
 function buildNav(){
   const nav = document.getElementById('nav-items');
   nav.innerHTML = NAV_ITEMS_ALL.filter(item=>{
+    if(!item.navInBottom) return false;
     if(item.perm==='__developer') return SESSION.perfil==='developer';
     return can(item.perm);
   }).map(item=>`
@@ -1169,7 +1217,7 @@ function buildNav(){
 /* ═══════════════════════════════════════════════════════
    NAVIGATION
 ═══════════════════════════════════════════════════════ */
-const VTITLES={inicio:'Inicio',pedidos:'Pedidos',inventario:'Inventario',recetas:'Catálogo de Productos',cotizaciones:'Cotizaciones',reportes:'Reportes',calendario:'Agenda',alertas:'Alertas',usuarios:'Usuarios',perfiles:'Perfiles y Permisos',config:'Configuración',ventas:'Punto de Venta',solicitudes:'Solicitudes de Clientes'};
+const VTITLES={inicio:'Inicio',pedidos:'Pedidos',inventario:'Inventario',recetas:'Catálogo de Productos',cotizaciones:'Cotizaciones',reportes:'Reportes',calendario:'Agenda',alertas:'Alertas',usuarios:'Usuarios',perfiles:'Perfiles y Permisos',config:'Configuración',ventas:'Punto de Venta',solicitudes:'Solicitudes de Clientes',cxp:'Cuentas por Pagar',cxc:'Cuentas por Cobrar'};
 let CUR='inicio';
 
 function sv(v){
@@ -1199,6 +1247,8 @@ function renderV(v){
   if(v==='config')       loadConfigForm();
   if(v==='ventas')       renderVentas();
   if(v==='solicitudes')  renderSolicitudes();
+  if(v==='cxp')          renderCXP();
+  if(v==='cxc')          renderCXC();
 }
 
 /* ═══════════════════════════════════════════════════════
@@ -1360,6 +1410,11 @@ function renderInicio(){
   urg.forEach(p=>html+=alHTML('al-wrn','⏰',`Entrega: ${p.cliente}`,`${p.desc} · ${fDate(normFecha(p.fecha))} ${normHora(p.hora)}`));
   const _sols=(DB.solicitudes||[]).filter(s=>s.estado==='nueva').slice(0,2);
   _sols.forEach(s=>html+=alHTML('al-info','📨',`Nueva solicitud: ${s.nombre}`,`${s.producto||'—'} · ${fDate(normFecha(s.fechaDeseada))||'Sin fecha'}`));
+  // CXP vencidas
+  const _cxpVenc=(DB.cxp||[]).filter(x=>x.estado!=='pagada'&&x.vencimiento&&normFecha(x.vencimiento)<today()).slice(0,2);
+  _cxpVenc.forEach(x=>html+=alHTML('al-dgr','💳',`CxP VENCIDA: ${x.tercero}`,`${x.concepto} · ${money(x.saldo||x.monto)}`));
+  const _cxcVenc=(DB.cxc||[]).filter(x=>x.estado!=='pagada'&&x.vencimiento&&normFecha(x.vencimiento)<today()).slice(0,2);
+  _cxcVenc.forEach(x=>html+=alHTML('al-wrn','💰',`CxC VENCIDA: ${x.tercero}`,`${x.concepto} · ${money(x.saldo||x.monto)}`));
   if(!html) html=alHTML('al-ok','✅','Todo en orden','Sin alertas críticas');
   al.innerHTML=html;
 
@@ -1367,7 +1422,9 @@ function renderInicio(){
   const _nUrg=urgentes().length;
   const _nCobrar=PEDS_DB().filter(p=>N(p.restante)>0&&p.estado!=='cancelado').length;
   const _nSols=(DB.solicitudes||[]).filter(s=>s.estado==='nueva').length;
-  const tot=_nStock+_nUrg+_nCobrar+_nSols;
+  const _nCXP=(DB.cxp||[]).filter(x=>x.estado!=='pagada'&&x.vencimiento&&normFecha(x.vencimiento)<today()).length;
+  const _nCXC=(DB.cxc||[]).filter(x=>x.estado!=='pagada'&&x.vencimiento&&normFecha(x.vencimiento)<today()).length;
+  const tot=_nStock+_nUrg+_nCobrar+_nSols+_nCXP+_nCXC;
   const nb=document.getElementById('nbadge');
   if(nb){nb.textContent=tot||'';nb.style.display=tot?'':'none';}
 }
@@ -1409,6 +1466,13 @@ function verPed(id){
   const BA={pendiente:'b-pend',en_proceso:'b-proc',listo:'b-list',entregado:'b-entr',cancelado:'b-canc'};
   // Parse all ingredient arrays safely
   const parseArr=v=>Array.isArray(v)?v:(typeof v==='string'?JSON.parse(v||'[]'):[]);
+  // Enrich extrasCreate from extras_pedidos table if empty
+  if(!p.extrasCreate||parseArr(p.extrasCreate).length===0){
+    const extRow=DB.extras_pedidos.find(e=>String(e.pedidoId)===String(p.id));
+    if(extRow&&extRow.extras){
+      try{p.extrasCreate=typeof extRow.extras==='string'?JSON.parse(extRow.extras):extRow.extras;}catch{}
+    }
+  }
   const iC=parseArr(p.ingsCalc);       // from recipe × qty
   const iU=parseArr(p.ingsUsados);     // actually used (after marcar listo)
   const eC=parseArr(p.extrasCreate);   // extras added when creating pedido
@@ -1822,6 +1886,12 @@ function savePed(){
   } else {
     const p={id:uid(),cliente:cli,telefono:document.getElementById('f-tel').value,desc,qty,total,anticipo:ant,restante:total-ant,fecha,hora:document.getElementById('f-hora').value,estado:document.getElementById('f-estado').value,notas:document.getElementById('f-notas').value,recId,ingsCalc,extrasCreate:extras,extrasProduccion:[],extrasEntrega:[],ingsUsados:[],created:new Date().toISOString(),updated:new Date().toISOString()};
     DB.pedidos.push(p);syncRow('pedidos','write',p,p.id);
+    // Save extras to separate sheet for persistence
+    if(extras.length>0){
+      const extRow={id:'ext_'+p.id, pedidoId:p.id, extras:JSON.stringify(extras), created:new Date().toISOString()};
+      DB.extras_pedidos.push(extRow);
+      syncRow('extras_pedidos','write',extRow,extRow.id);
+    }
     // Register anticipo as payment on today's date
     if(ant>0){
       const pago={id:uid(),pedidoId:p.id,cliente:p.cliente,monto:ant,tipo:'anticipo',fecha:today(),metodo:'Efectivo',created:new Date().toISOString()};
@@ -1872,29 +1942,61 @@ function addExtraRow(wrapId,prefix){
 let invTab='stock';
 function tabI(t,el){invTab=t;document.querySelectorAll('#tabs-inv .tab').forEach(x=>x.classList.remove('on'));el.classList.add('on');if(t==='stock')renderStock();else if(t==='entrada')renderMovForm('entrada');else if(t==='salida')renderMovForm('salida');else renderMovs();}
 function renderStock(){
-  const cont=document.getElementById('inv-content');const crits=ING().filter(i=>i.cant<=i.min);let html='';
-  if(crits.length)html+=alHTML('al-dgr','⚠️',`${crits.length} ingrediente(s) en nivel crítico`,'Stock por debajo del mínimo configurado');
-  html+=`<div class="card"><div class="card-hd">🏷 Ingredientes${can('editar_inventario')?`<button class="btn btn-amber btn-sm" style="margin-left:auto" onclick="openIng(null)">+ Nuevo</button>`:''}  </div>`;
-  ING().forEach(i=>{const pct=Math.min(100,Math.round((i.cant/Math.max(i.max,0.001))*100));const s=i.cant<=i.min?'crit':i.cant<=i.min*1.5?'low':'ok';const ic=s==='crit'?'🔴':s==='low'?'🟡':'🟢';
-    html+=`<div class="ibr"><div style="font-size:1rem">${ic}</div><div class="ibr-body">
-      <div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:.82rem;font-weight:700">${i.nombre}</span><span style="font-size:.82rem;font-weight:700;color:var(--amber)">${R(i.cant)} <span style="font-size:.66rem;color:var(--ink3)">${i.unidad}</span></span></div>
+  const cont=document.getElementById('inv-content');
+  const crits=ING().filter(i=>N(i.cant)<=N(i.min));
+  let html='';
+  if(crits.length) html+=alHTML('al-dgr','⚠️',`${crits.length} ítem(s) en nivel crítico`,'Stock por debajo del mínimo configurado');
+
+  const ingList=ING().filter(i=>(i.tipo||'ingrediente')==='ingrediente');
+  const prodList=ING().filter(i=>i.tipo==='producto');
+
+  const renderItem=(i)=>{
+    const pct=Math.min(100,Math.round((N(i.cant)/Math.max(N(i.max),0.001))*100));
+    const s=N(i.cant)<=N(i.min)?'crit':N(i.cant)<=N(i.min)*1.5?'low':'ok';
+    const ic=s==='crit'?'🔴':s==='low'?'🟡':'🟢';
+    return `<div class="ibr"><div style="font-size:1rem">${ic}</div><div class="ibr-body">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:.82rem;font-weight:700">${i.nombre}</span>
+        <span style="font-size:.82rem;font-weight:700;color:var(--amber)">${R(i.cant)} <span style="font-size:.66rem;color:var(--ink3)">${i.unidad}</span></span>
+      </div>
       <div class="ibr-bg"><div class="ibr-fill fill-${s}" style="width:${pct}%"></div></div>
-      <div style="font-size:.62rem;color:var(--ink3);margin-top:2px">Mín: ${i.min} · Máx: ${i.max} ${i.unidad}${i.costo?` · Costo:$${i.costo}`:''} ${i.precioVenta?`· Venta:$${i.precioVenta}`:''}</div>
+      <div style="font-size:.62rem;color:var(--ink3);margin-top:2px">
+        Mín:${i.min} · Máx:${i.max} ${i.unidad}
+        ${i.costo?` · Costo:${money(i.costo)}`:''} 
+        ${i.precioVenta?` · Venta:${money(i.precioVenta)}`:''}
+      </div>
     </div>${can('editar_inventario')?`<button onclick="openIng(${i.id})" style="background:none;border:none;color:var(--amber);cursor:pointer;font-size:.9rem;padding:3px">✏️</button>`:''}</div>`;
-  });
-  html+=`</div>`;cont.innerHTML=html;
+  };
+
+  // ── Ingredientes ──
+  html+=`<div class="card"><div class="card-hd"><span class="ico">🧂</span>Ingredientes
+    ${can('editar_inventario')?`<button class="btn btn-amber btn-sm" style="margin-left:auto" onclick="openIngTipo('ingrediente')">+ Ingrediente</button>`:''}
+  </div>`;
+  if(ingList.length) ingList.forEach(i=>{ html+=renderItem(i); });
+  else html+=`<div style="font-size:.8rem;color:var(--ink3);font-style:italic;padding:8px 0">Sin ingredientes registrados</div>`;
+  html+=`</div>`;
+
+  // ── Productos ──
+  html+=`<div class="card"><div class="card-hd"><span class="ico">📦</span>Productos
+    ${can('editar_inventario')?`<button class="btn btn-amber btn-sm" style="margin-left:auto" onclick="openIngTipo('producto')">+ Producto</button>`:''}
+  </div>`;
+  if(prodList.length) prodList.forEach(i=>{ html+=renderItem(i); });
+  else html+=`<div style="font-size:.8rem;color:var(--ink3);font-style:italic;padding:8px 0">Sin productos registrados</div>`;
+  html+=`</div>`;
+
+  cont.innerHTML=html;
 }
 function openIng(id){
   const i=id?ING().find(x=>x.id==id):null;document.getElementById('ing-titulo').textContent=i?'Editar Ingrediente':'Nuevo Ingrediente';document.getElementById('i-edit-id').value=id||'';
   document.getElementById('i-nombre').value=i?.nombre||'';document.getElementById('i-cant').value=i?.cant||'';document.getElementById('i-unidad').value=i?.unidad||'kg';
-  document.getElementById('i-min').value=i?.min||'';document.getElementById('i-max').value=i?.max||'';document.getElementById('i-costo').value=i?.costo||'';document.getElementById('i-pventa').value=i?.precioVenta||'';
+  document.getElementById('i-tipo').value=i?.tipo||'ingrediente';document.getElementById('i-min').value=i?.min||'';document.getElementById('i-max').value=i?.max||'';document.getElementById('i-costo').value=i?.costo||'';document.getElementById('i-pventa').value=i?.precioVenta||'';
   om('mo-ing');
 }
 function saveIng(){
   const nombre=document.getElementById('i-nombre').value.trim();if(!nombre){toast('❌ Ingresa un nombre');return;}
   const eid=parseInt(document.getElementById('i-edit-id').value)||0;
   const precioVentaVal=N(document.getElementById('i-pventa').value)||0;
-  const data={nombre,cant:N(document.getElementById('i-cant').value),unidad:document.getElementById('i-unidad').value,
+  const data={nombre,tipo:document.getElementById('i-tipo').value||'ingrediente',cant:N(document.getElementById('i-cant').value),unidad:document.getElementById('i-unidad').value,
     min:N(document.getElementById('i-min').value),max:N(document.getElementById('i-max').value)||100,
     costo:N(document.getElementById('i-costo').value),precioVenta:precioVentaVal,
     updated:new Date().toISOString()};
@@ -2116,7 +2218,8 @@ function renderRep(tab){
     const dias=[];
     for(let i=6;i>=0;i--){
       const d=new Date(filtEnd.getTime()-i*86400000);
-      const k=d.toISOString().slice(0,10);
+      // Use LOCAL date to avoid UTC timezone shift
+      const k=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
       const lbl=d.toLocaleDateString('es',{day:'2-digit',month:'2-digit'});
       // Cash received on this date (from pagos)
       const t=(DB.pagos||[]).filter(pg=>normFecha(pg.fecha)===k).reduce((s,pg)=>s+N(pg.monto),0);
@@ -2135,7 +2238,7 @@ function renderRep(tab){
     const diasMes=[];
     const daysInM=new Date(parseInt(filtMes.slice(0,4)),parseInt(filtMes.slice(5,7)),0).getDate();
     for(let d=1;d<=daysInM;d++){
-      const k=`${filtMes}-${String(d).padStart(2,'0')}`;
+      const k=`${filtMes}-${String(d).padStart(2,'0')}`;  // local date
       const t=(DB.pagos||[]).filter(pg=>normFecha(pg.fecha)===k).reduce((s,pg)=>s+N(pg.monto),0);
       if(t>0) diasMes.push({k,d,t});
     }
@@ -2162,6 +2265,10 @@ function renderRep(tab){
     // PnL uses PAYMENT DATE (pagos) for income, not delivery date
     const pagosMes=(DB.pagos||[]).filter(pg=>{const f=normFecha(pg.fecha);return f&&f.startsWith(filtMes);});
     const ingresosCobrados=pagosMes.reduce((s,pg)=>s+N(pg.monto),0);
+    // CXC cobradas this month
+    const cxcCobradas=(DB.cxc||[]).filter(x=>x.estado==='pagada'&&x.updated&&x.updated.startsWith(filtMes)).reduce((s,x)=>s+N(x.monto),0);
+    // CXP pagadas this month (as expense)
+    const cxpPagadas=(DB.cxp||[]).filter(x=>x.estado==='pagada'&&x.updated&&x.updated.startsWith(filtMes)).reduce((s,x)=>s+N(x.monto),0);
 
     // Pending (agreed but not yet received)
     const pendMes=PEDS_DB().filter(p=>{const f=normFecha(p.fecha);return f.startsWith(filtMes)&&p.estado!=='cancelado';}).reduce((s,p)=>s+N(p.restante),0);
@@ -2193,7 +2300,7 @@ function renderRep(tab){
     const valorInv=ING().reduce((s,i)=>s+(N(i.costo)*N(i.cant)),0);
 
     const ub=ingresosCobrados-costoP;
-    const un=ub-tG-totalCompras;
+    const un=ub-tG-totalCompras-cxpPagadas;
     const mb=ingresosCobrados>0?Math.round(ub/ingresosCobrados*100):0;
     const mn=ingresosCobrados>0?Math.round(un/ingresosCobrados*100):0;
     const mesLbl=new Date(filtMes+'-02').toLocaleDateString('es',{month:'long',year:'numeric'});
@@ -2210,10 +2317,11 @@ function renderRep(tab){
       </div>
       <div class="pnl-row" style="padding:9px 0;border-top:1.5px solid var(--border2)"><span style="font-weight:700">Utilidad Bruta</span><span class="pnl-val ${ub>=0?'pnl-positive':'pnl-negative'}">${money(ub)} <span style="font-size:.65rem">(${mb}%)</span></span></div>
       <div class="pnl-section" style="margin-top:4px"><div class="pnl-section-title">💸 Gastos y Compras</div>
+        ${cxpPagadas>0?`<div class="pnl-row"><span class="pnl-label">💳 CxP pagadas este período</span><span class="pnl-val pnl-negative">-${money(cxpPagadas)}</span></div>`:''}
         ${totalCompras>0?`<div class="pnl-row"><span class="pnl-label">🛒 Compras de inventario (${comprasMes.length} entradas)</span><span class="pnl-val pnl-negative">-${money(totalCompras)}</span></div>`:''}
         ${Object.entries(gbc).map(([cat,v])=>`<div class="pnl-row"><span class="pnl-label">${cat}</span><span class="pnl-val pnl-negative">-${money(v)}</span></div>`).join('')}
         ${!gastosMes.length&&!totalCompras?`<div style="font-size:.77rem;color:var(--ink3);font-style:italic;padding:3px 0">Sin gastos registrados</div>`:''}
-        <div class="pnl-row" style="border-top:1px solid var(--border);margin-top:3px;padding-top:7px"><span style="font-weight:600">Total Egresos</span><span class="pnl-val pnl-negative">-${money(tG+totalCompras)}</span></div>
+        <div class="pnl-row" style="border-top:1px solid var(--border);margin-top:3px;padding-top:7px"><span style="font-weight:600">Total Egresos</span><span class="pnl-val pnl-negative">-${money(tG+totalCompras+cxpPagadas)}</span></div>
       </div>
       <div class="pnl-total"><span class="pnl-total-label">UTILIDAD NETA</span><span class="pnl-total-val ${un>=0?'pnl-positive':'pnl-negative'}">${money(un)}</span></div>
       <div style="text-align:right;font-size:.72rem;color:${mn>=0?'var(--ok)':'var(--danger)'};font-weight:700;margin-top:1px">Margen neto: ${mn}%</div>
@@ -2295,6 +2403,19 @@ function renderAlertas(){
   const sn={};prox.forEach(p=>{const ic=Array.isArray(p.ingsCalc)?p.ingsCalc:(typeof p.ingsCalc==='string'?JSON.parse(p.ingsCalc||'[]'):[]);ic.forEach(u=>{sn[u.iid]=(sn[u.iid]||0)+u.cant;});});
   let prob=false;Object.entries(sn).forEach(([iid,need])=>{const i=ING().find(x=>x.id==iid);if(i&&i.cant<need){html+=alHTML('al-pur','🧂',`Faltará: ${i.nombre}`,`Necesitas ${R(need)} ${i.unidad}. Stock: ${R(i.cant)}`);prob=true;}});
   if(!prob)html+=alHTML('al-ok','✅','Stock suficiente','Insumos suficientes para pedidos próximos');
+
+  // CXP vencidas
+  html+=`<div class="shd" style="margin-top:7px"><h3>💳 Cuentas por Pagar Vencidas</h3><button class="btn-link" onclick="sv('cxp')">Ver →</button></div>`;
+  const cxpVenc=(DB.cxp||[]).filter(x=>x.estado!=='pagada'&&x.vencimiento&&normFecha(x.vencimiento)<today());
+  if(!cxpVenc.length) html+=alHTML('al-ok','✅','Sin CxP vencidas','Todo al corriente');
+  cxpVenc.forEach(x=>html+=alHTML('al-dgr','💳',`${x.tercero} — ${money(x.saldo||x.monto)}`,`${x.concepto} · Venció: ${fDate(normFecha(x.vencimiento))}`));
+
+  // CXC vencidas
+  html+=`<div class="shd" style="margin-top:7px"><h3>💰 Cuentas por Cobrar Vencidas</h3><button class="btn-link" onclick="sv('cxc')">Ver →</button></div>`;
+  const cxcVenc=(DB.cxc||[]).filter(x=>x.estado!=='pagada'&&x.vencimiento&&normFecha(x.vencimiento)<today());
+  if(!cxcVenc.length) html+=alHTML('al-ok','✅','Sin CxC vencidas','Todo al corriente');
+  cxcVenc.forEach(x=>html+=alHTML('al-wrn','💰',`${x.tercero} — ${money(x.saldo||x.monto)}`,`${x.concepto} · Venció: ${fDate(normFecha(x.vencimiento))}`));
+
   cont.innerHTML=html;
 }
 
@@ -2427,9 +2548,10 @@ function saveConfig(){
 function nextFacNum(){const n=CFG.facnum||1;CFG.facnum=n+1;LS.s('dg_cfg',CFG);return(CFG.prefix||'FAC-')+String(n).padStart(4,'0');}
 function facHeader(tipo,num,fecha){
   const neg=CFG.nombre||'Mi Repostería';
+  const hora=new Date().toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit'});
   let lines=[];if(CFG.eslogan)lines.push(`<div style="font-size:11px;color:#666;margin-top:1px">${CFG.eslogan}</div>`);if(CFG.nit)lines.push(`<div style="font-size:10px;color:#888">NIT/RFC: ${CFG.nit}</div>`);
   const contact=[CFG.tel,CFG.email,CFG.dir,CFG.redes].filter(Boolean).join('  ·  ');if(contact)lines.push(`<div style="font-size:10px;color:#666;margin-top:1px">${contact}</div>`);
-  return`<div style="border-bottom:2px solid #1c0f00;padding-bottom:12px;margin-bottom:14px"><div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;flex-wrap:wrap"><div><div style="font-size:19px;font-weight:700;color:#1c0f00;font-family:Georgia,serif">🧁 ${neg}</div>${lines.join('')}</div><div style="text-align:right;flex-shrink:0"><div style="font-size:17px;font-weight:700;color:#c97c1e;font-family:Georgia,serif">${tipo.toUpperCase()}</div><div style="font-size:11px;color:#555">N° <b>${num}</b></div><div style="font-size:11px;color:#555">Fecha: ${fecha}</div></div></div></div>`;
+  return`<div style="border-bottom:2px solid #1c0f00;padding-bottom:12px;margin-bottom:14px"><div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;flex-wrap:wrap"><div><div style="font-size:19px;font-weight:700;color:#1c0f00;font-family:Georgia,serif">🧁 ${neg}</div>${lines.join('')}</div><div style="text-align:right;flex-shrink:0"><div style="font-size:17px;font-weight:700;color:#c97c1e;font-family:Georgia,serif">${tipo.toUpperCase()}</div><div style="font-size:11px;color:#555">N° <b>${num}</b></div><div style="font-size:11px;color:#555">Fecha: ${fecha}</div><div style="font-size:10px;color:#888">Hora emisión: ${hora}</div></div></div></div>`;
 }
 function facClienteRow(p){return`<div style="background:#fdf5e9;border-radius:8px;padding:9px 11px;margin-bottom:12px;border:1px solid rgba(100,60,20,.15)"><div style="font-size:10px;font-weight:700;letter-spacing:.6px;color:#7a4a20;margin-bottom:4px">DATOS DEL CLIENTE</div><div style="font-size:13px;font-weight:700;color:#1c0f00">${p.cliente}</div>${p.telefono?`<div style="font-size:11px;color:#555">📞 ${p.telefono}</div>`:''}<div style="font-size:11px;color:#555;margin-top:2px">📅 Entrega: <b>${fDate(normFecha(p.fecha))}</b> a las <b>${normHora(p.hora)}h</b></div></div>`;}
 function facTabla(filas){
@@ -2452,6 +2574,11 @@ function facTotales(lineas){return`<div style="display:flex;justify-content:flex
 function facPie(notas){const pie=CFG.pie||'',cond=CFG.condiciones||'',grac=CFG.gracias||'';return`<div style="border-top:1px solid #ddd;padding-top:10px;margin-top:6px">${notas?`<div style="background:#fdf5e9;border-radius:6px;padding:7px 9px;margin-bottom:8px;border-left:3px solid #c97c1e"><span style="font-size:10px;font-weight:700;color:#7a4a20">NOTAS: </span><span style="font-size:11px;color:#333">${notas}</span></div>`:''} ${cond?`<div style="font-size:10px;color:#888;margin-bottom:3px">📋 ${cond}</div>`:''} ${pie?`<div style="font-size:10px;color:#888;margin-bottom:5px">${pie}</div>`:''} ${grac?`<div style="font-size:13px;font-weight:700;color:#c97c1e;text-align:center;margin-top:7px;font-family:Georgia,serif">${grac}</div>`:''}</div>`;}
 // ── Helper: build factura rows including extras ──
 function buildPedFilas(p){
+  // Enrich extrasCreate from extras_pedidos if missing
+  if(!p.extrasCreate||String(p.extrasCreate)==='[]'||String(p.extrasCreate)===''){
+    const extRow=DB.extras_pedidos.find(e=>String(e.pedidoId)===String(p.id));
+    if(extRow&&extRow.extras){try{p.extrasCreate=typeof extRow.extras==='string'?JSON.parse(extRow.extras):extRow.extras;}catch{}}
+  }
   const parseA=v=>{
     if(!v||v===''||v==='null') return [];
     if(Array.isArray(v)) return v;
@@ -2959,6 +3086,9 @@ function loadConfigForm(){
   // WhatsApp
   const wsEl=document.getElementById('cfg-ws');
   if(wsEl) wsEl.value = CFG.wsNumero||'';
+  // Users shortcut
+  const usrCard=document.getElementById('cfg-users-shortcut');
+  if(usrCard) usrCard.style.display = SESSION?.perfil==='developer' ? '' : 'none';
 }
 
 function renderPerfilesCfg(){
@@ -2974,16 +3104,6 @@ function renderPerfilesCfg(){
 }
 
 // Expose ECF emitter from pedido detail
-function abrirEcfOConfig(pedId){
-  if(ECF&&ECF.rnc){
-    cm('mo-ver');
-    openEcfEmitir(pedId);
-  } else {
-    cm('mo-ver');
-    toast('⚠️ Primero configura el RNC en Configuración → ECF');
-    setTimeout(()=>sv('config'),600);
-  }
-}
 function addEcfBtnToPed(pedId){
   if(!can('emitir_ecf')) return '';
   return `<button class="btn btn-ghost btn-sm" onclick="abrirEcfOConfig(${pedId})">🧾 ${ECF&&ECF.rnc?'e-CF DGII':'Config ECF'}</button>`;
@@ -3447,10 +3567,188 @@ function enviarSolicitudPublica(){
 }
 
 /* ═══════════════════════════════════════════════════════
-   INVENTARIO — rename labels to Ingredientes/Productos
+   INVENTARIO — segregación tipo ingrediente/producto
 ═══════════════════════════════════════════════════════ */
-// The "tipo" field on inventario items: 'ingrediente' (default) or 'producto'
-// Already handled — precioVenta > 0 means it shows as a sellable product in caja
+function openIngTipo(tipo){
+  openIng(null);
+  setTimeout(()=>{ const el=document.getElementById('i-tipo'); if(el) el.value=tipo; },60);
+}
+
+/* ═══════════════════════════════════════════════════════
+   CUENTAS POR PAGAR / COBRAR (CXP / CXC)
+═══════════════════════════════════════════════════════ */
+let cxpTab='pendiente', cxcTab='pendiente';
+
+function tabCX(mod,t,el){
+  if(mod==='cxp') cxpTab=t; else cxcTab=t;
+  document.querySelectorAll(`#tabs-${mod} .tab`).forEach(x=>x.classList.remove('on'));
+  el.classList.add('on');
+  if(mod==='cxp') renderCXP(); else renderCXC();
+}
+
+function renderCXP(){
+  const cont=document.getElementById('cxp-list'); if(!cont) return;
+  const res=document.getElementById('cxp-resumen'); if(res) renderCXResumen('cxp',res);
+  const list=(DB.cxp||[]).filter(x=>x.estado===cxpTab)
+    .sort((a,b)=>String(a.vencimiento||'').localeCompare(String(b.vencimiento||'')));
+  cont.innerHTML = list.length
+    ? `<div class="card"><div style="padding:0">${list.map(x=>cxRow(x,'cxp')).join('')}</div></div>`
+    : `<div class="empty"><div class="empty-i">💳</div><div class="empty-t">Sin cuentas ${cxpTab}s</div></div>`;
+}
+
+function renderCXC(){
+  const cont=document.getElementById('cxc-list'); if(!cont) return;
+  const res=document.getElementById('cxc-resumen'); if(res) renderCXResumen('cxc',res);
+  const list=(DB.cxc||[]).filter(x=>x.estado===cxcTab)
+    .sort((a,b)=>String(a.vencimiento||'').localeCompare(String(b.vencimiento||'')));
+  cont.innerHTML = list.length
+    ? `<div class="card"><div style="padding:0">${list.map(x=>cxRow(x,'cxc')).join('')}</div></div>`
+    : `<div class="empty"><div class="empty-i">💰</div><div class="empty-t">Sin cuentas ${cxcTab}s</div></div>`;
+}
+
+function renderCXResumen(mod,el){
+  const data=DB[mod]||[];
+  const total=data.reduce((s,x)=>s+N(x.monto),0);
+  const saldoPend=data.filter(x=>x.estado!=='pagada').reduce((s,x)=>s+N(x.saldo),0);
+  const vencidas=data.filter(x=>x.estado!=='pagada'&&x.vencimiento&&normFecha(x.vencimiento)<today()).length;
+  el.innerHTML=`<div class="sg" style="margin-bottom:0">
+    <div class="sc sc-b"><div class="sl">Total ${mod==='cxp'?'a Pagar':'a Cobrar'}</div><div class="sv">${money(total)}</div><div class="ss">registrado</div></div>
+    <div class="sc sc-${vencidas>0?'b':'c'}"><div class="sl">${vencidas>0?'⚠️ Vencidas':'Saldo Pendiente'}</div><div class="sv">${vencidas>0?vencidas:money(saldoPend)}</div><div class="ss">${vencidas>0?'atención requerida':'por '+( mod==='cxp'?'pagar':'cobrar')}</div></div>
+  </div>`;
+}
+
+function cxRow(x,mod){
+  const venc=x.vencimiento?normFecha(x.vencimiento):'';
+  const isVenc=venc&&venc<today()&&x.estado!=='pagada';
+  const estColor={pendiente:'b-pend',parcial:'b-proc',pagada:'b-list'};
+  const estLabel={pendiente:'⏳ Pendiente',parcial:'🔄 Parcial',pagada:'✅ Pagada'};
+  return`<div class="li" onclick="openCXForm('${x.id}','${mod}')" style="cursor:pointer">
+    <div class="la ${isVenc?'bg-d':'bg-a'}">${mod==='cxp'?'💳':'💰'}</div>
+    <div class="lb">
+      <div class="lt">${x.tercero||'—'}${isVenc?' <span style="color:var(--danger);font-size:.7rem">VENCIDA</span>':''}</div>
+      <div class="ls">${x.concepto||'—'} · ${fDate(venc)||'Sin vencimiento'}</div>
+    </div>
+    <div class="lm">
+      <div class="lamt">${money(N(x.saldo)||N(x.monto))}</div>
+      <div class="badge ${estColor[x.estado]||'b-pend'}">${estLabel[x.estado]||x.estado}</div>
+    </div>
+  </div>`;
+}
+
+function openCXP(id){ openCXForm(id||null,'cxp'); }
+function openCXC(id){ openCXForm(id||null,'cxc'); }
+
+function openCXForm(id,mod){
+  const x=id?(DB[mod]||[]).find(i=>String(i.id)===String(id)):null;
+  const titulo=mod==='cxp'?'Cuenta por Pagar':'Cuenta por Cobrar';
+  const terceroLabel=mod==='cxp'?'Proveedor / Acreedor':'Cliente / Deudor';
+  document.getElementById('cobro-content').innerHTML=`
+    <div style="font-size:.9rem;font-weight:700;color:var(--amber);margin-bottom:12px">
+      ${mod==='cxp'?'💳':'💰'} ${titulo}
+    </div>
+    <div class="fg"><label class="fl">${terceroLabel} *</label>
+      <input class="fc" id="cx-tercero" value="${x?.tercero||''}" placeholder="Nombre"></div>
+    <div class="fg"><label class="fl">Concepto *</label>
+      <input class="fc" id="cx-concepto" value="${x?.concepto||''}" placeholder="${mod==='cxp'?'Compra harina a crédito':'Venta a crédito'}"></div>
+    <div class="fr2">
+      <div class="fg"><label class="fl">Monto total ($) *</label>
+        <input class="fc" id="cx-monto" type="number" value="${x?.monto||''}" placeholder="0.00" oninput="calcCXSaldo()"></div>
+      <div class="fg"><label class="fl">${mod==='cxp'?'Ya pagado ($)':'Ya cobrado ($)'}</label>
+        <input class="fc" id="cx-abonado" type="number" value="${x?.abonado||0}" placeholder="0" oninput="calcCXSaldo()"></div>
+    </div>
+    <div id="cx-saldo-disp" style="font-size:.84rem;color:var(--amber);font-weight:700;margin-bottom:10px;padding:7px 0;border-top:1px solid var(--border)"></div>
+    <div class="fr2">
+      <div class="fg"><label class="fl">Fecha emisión</label>
+        <input class="fc" id="cx-fecha" type="date" value="${x?.fecha||today()}"></div>
+      <div class="fg"><label class="fl">Fecha vencimiento</label>
+        <input class="fc" id="cx-venc" type="date" value="${x?.vencimiento||''}"></div>
+    </div>
+    <div class="fg"><label class="fl">Notas</label>
+      <textarea class="fc" id="cx-notas" rows="2" placeholder="Detalles, condiciones, referencia...">${x?.notas||''}</textarea></div>
+    <input type="hidden" id="cx-edit-id" value="${id||''}">
+    <input type="hidden" id="cx-mod" value="${mod}">
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-amber btn-block" onclick="saveCX()">💾 Guardar</button>
+      ${x&&x.estado!=='pagada'?`<button class="btn btn-sage btn-sm" onclick="abonarCX('${x.id}','${mod}')">💵 Registrar Abono</button>`:''}
+      ${x?`<button class="btn btn-rust btn-sm" onclick="if(confirm('¿Eliminar?')){DB['${mod}']=DB['${mod}'].filter(i=>String(i.id)!=='${x.id}');syncRow('${mod}','delete',null,'${x.id}');cm('mo-cobro');renderV(CUR);toast('🗑 Eliminada')}">🗑</button>`:''}
+    </div>`;
+  calcCXSaldo();
+  // Hide the original sage confirm button and show this form instead
+  const btn=document.querySelector('#mo-cobro .btn-sage');
+  if(btn) btn.style.display='none';
+  om('mo-cobro');
+}
+
+function calcCXSaldo(){
+  const m=N(document.getElementById('cx-monto')?.value);
+  const a=N(document.getElementById('cx-abonado')?.value);
+  const el=document.getElementById('cx-saldo-disp');
+  if(el) el.textContent=`Saldo pendiente: ${money(Math.max(0,m-a))}`;
+}
+
+function saveCX(){
+  const tercero=document.getElementById('cx-tercero')?.value.trim();
+  const concepto=document.getElementById('cx-concepto')?.value.trim();
+  const monto=N(document.getElementById('cx-monto')?.value);
+  if(!tercero||!concepto||!monto){toast('❌ Completa los campos requeridos');return;}
+  const mod=document.getElementById('cx-mod')?.value||'cxp';
+  const abonado=N(document.getElementById('cx-abonado')?.value)||0;
+  const saldo=Math.max(0,monto-abonado);
+  const estado=saldo<=0?'pagada':abonado>0?'parcial':'pendiente';
+  const eid=document.getElementById('cx-edit-id')?.value;
+  const data={tercero,concepto,monto,abonado,saldo,estado,
+    fecha:document.getElementById('cx-fecha')?.value||today(),
+    vencimiento:document.getElementById('cx-venc')?.value||'',
+    notas:document.getElementById('cx-notas')?.value||'',
+    updated:new Date().toISOString()};
+  if(eid){
+    const x=(DB[mod]||[]).find(i=>String(i.id)===eid);
+    if(x){Object.assign(x,data);syncRow(mod,'update',x,x.id);}
+  } else {
+    const x={id:uid(),...data,created:new Date().toISOString()};
+    if(!DB[mod]) DB[mod]=[];
+    DB[mod].push(x);syncRow(mod,'write',x,x.id);
+  }
+  // Restore cobro modal for pedido use
+  const btn=document.querySelector('#mo-cobro .btn-sage');
+  if(btn){btn.style.display='';btn.onclick=confirmCobro;}
+  cm('mo-cobro');
+  toast('✅ Cuenta guardada');
+  renderV(CUR);
+}
+
+function abonarCX(id,mod){
+  const x=(DB[mod]||[]).find(i=>String(i.id)===String(id)); if(!x) return;
+  const monto=prompt(`Monto a abonar (saldo actual: ${money(x.saldo)}):`);
+  if(!monto||isNaN(N(monto))||N(monto)<=0) return;
+  x.abonado=(N(x.abonado)||0)+N(monto);
+  x.saldo=Math.max(0,N(x.monto)-x.abonado);
+  x.estado=x.saldo<=0?'pagada':x.abonado>0?'parcial':'pendiente';
+  x.updated=new Date().toISOString();
+  syncRow(mod,'update',x,x.id);
+  // Register payment
+  const pg={id:uid(),pedidoId:id,cliente:x.tercero,monto:N(monto),tipo:mod+'-abono',fecha:today(),metodo:'Efectivo',created:new Date().toISOString()};
+  DB.pagos.push(pg);syncRow('pagos','write',pg,pg.id);
+  cm('mo-cobro');
+  const btn=document.querySelector('#mo-cobro .btn-sage');
+  if(btn){btn.style.display='';btn.onclick=confirmCobro;}
+  toast(`✅ Abono registrado — saldo: ${money(x.saldo)}`);
+  renderV(CUR);
+}
+
+/* ═══════════════════════════════════════════════════════
+   ECF BUTTON FIX — always works
+═══════════════════════════════════════════════════════ */
+function abrirEcfOConfig(pedId){
+  cm('mo-ver');
+  if(ECF&&ECF.rnc){
+    openEcfEmitir(pedId);
+  } else {
+    toast('⚠️ Configura el RNC en Configuración → ECF');
+    setTimeout(()=>sv('config'),500);
+  }
+}
+
 
 </script>
 
