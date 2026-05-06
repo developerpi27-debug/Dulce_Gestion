@@ -469,10 +469,18 @@ select.fc{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
             <option value="especial">Régimen Especial</option>
           </select>
         </div>
+        <div class="fg"><label class="fl">ITBIS (%)</label>
+          <input class="fc" id="ecf-itbis-rate" type="number" placeholder="18" min="0" max="100" value="18">
+        </div>
+        <div class="divider"></div>
+        <div style="font-size:.7rem;font-weight:700;color:var(--ink2);margin-bottom:7px;letter-spacing:.2px">📋 RANGOS DE COMPROBANTES (asignados por DGII)</div>
+        <div id="ecf-rangos-list"></div>
+        <button class="btn btn-ghost btn-sm" onclick="addEcfRango()" style="margin-bottom:10px">+ Agregar rango</button>
+        <div class="divider"></div>
         <div style="font-size:.7rem;font-weight:700;color:var(--ink2);margin-bottom:7px;letter-spacing:.2px">TIPOS DE e-CF HABILITADOS</div>
         <div id="ecf-tipos-list"></div>
         <button class="btn btn-ghost btn-sm" onclick="addEcfTipo()" style="margin-bottom:10px">+ Agregar tipo</button>
-        <div style="font-size:.7rem;font-weight:700;color:var(--ink2);margin-bottom:6px">SECUENCIAS POR TIPO</div>
+        <div style="font-size:.7rem;font-weight:700;color:var(--ink2);margin-bottom:6px">SECUENCIAS ACTUALES</div>
         <div id="ecf-secuencias"></div>
         <button class="btn btn-amber btn-block" style="margin-top:10px" onclick="saveEcf()">💾 Guardar ECF</button>
       </div>
@@ -965,9 +973,11 @@ async function loadAllData() {
           } else if(k==='hora'){
             obj[k]=normHora(v);
           } else if(k==='fecha'){
-            // Normalize fecha: Sheets may return as date object or different format
             const nf=normFecha(v);
             obj[k]=nf||v;
+          } else if(k==='tipo'&&!v){
+            // Default tipo to 'ingrediente' if missing from Sheets
+            obj[k]='ingrediente';
           } else {
             obj[k]=v;
           }
@@ -1264,6 +1274,10 @@ const N=v=>parseFloat(v)||0;
 const R=v=>{const n=N(v);return n%1===0?n:parseFloat(n.toFixed(3));};
 const fDate=s=>{if(!s)return'';try{const str=String(s).trim();if(/^\d{4}-\d{2}-\d{2}/.test(str)){const[y,m,d]=str.split('-');return`${d}/${m}/${y}`;}if(/^\d{2}\/\d{2}\/\d{4}/.test(str))return str;const d=new Date(str);if(!isNaN(d))return d.toLocaleDateString('es',{day:'2-digit',month:'2-digit',year:'numeric'});}catch{}return String(s).slice(0,10);};
 
+function localISODate(){
+  const d=new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}T${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`;
+}
 function normHora(v){
   if(v===null||v===undefined||v==='') return '';
   // Strip apostrophe prefix added by Apps Script to prevent time conversion
@@ -1378,8 +1392,14 @@ function renderInicio(){
   const todayPagos=(DB.pagos||[]);
   const pagosHoy=todayPagos.filter(pg=>normFecha(pg.fecha)===h);
   const pagosMesArr=todayPagos.filter(pg=>{const f=normFecha(pg.fecha);return f&&f.startsWith(mes);});
-  const vHoy=pagosHoy.reduce((s,pg)=>s+N(pg.monto),0);
-  const vMes=pagosMesArr.reduce((s,pg)=>s+N(pg.monto),0);
+  // Also count direct ventas-caja in case pagos table is behind
+  const ventasHoyCaja=(DB.ventas||[]).filter(v=>normFecha(v.fecha)===h).reduce((s,v)=>s+N(v.total),0);
+  const ventasMesCaja=(DB.ventas||[]).filter(v=>{const f=normFecha(v.fecha);return f&&f.startsWith(mes);}).reduce((s,v)=>s+N(v.total),0);
+  const vHoyPagos=pagosHoy.reduce((s,pg)=>s+N(pg.monto),0);
+  const vMesPagos=pagosMesArr.reduce((s,pg)=>s+N(pg.monto),0);
+  // Use whichever is higher (avoids 0 when pagos table hasn't synced yet)
+  const vHoy=Math.max(vHoyPagos,ventasHoyCaja);
+  const vMes=Math.max(vMesPagos,ventasMesCaja);
   // Notification for new solicitudes
   const newSols=(DB.solicitudes||[]).filter(s=>s.estado==='nueva').length;
   const cobrar=peds.filter(p=>p.estado!=='cancelado').reduce((s,p)=>s+N(p.restante),0);
@@ -1424,7 +1444,8 @@ function renderInicio(){
   const _nSols=(DB.solicitudes||[]).filter(s=>s.estado==='nueva').length;
   const _nCXP=(DB.cxp||[]).filter(x=>x.estado!=='pagada'&&x.vencimiento&&normFecha(x.vencimiento)<today()).length;
   const _nCXC=(DB.cxc||[]).filter(x=>x.estado!=='pagada'&&x.vencimiento&&normFecha(x.vencimiento)<today()).length;
-  const tot=_nStock+_nUrg+_nCobrar+_nSols+_nCXP+_nCXC;
+  const _nECF=ECF&&ECF.rnc?checkEcfAlerts().length:0;
+  const tot=_nStock+_nUrg+_nCobrar+_nSols+_nCXP+_nCXC+_nECF;
   const nb=document.getElementById('nbadge');
   if(nb){nb.textContent=tot||'';nb.style.display=tot?'':'none';}
 }
@@ -1649,7 +1670,7 @@ function confirmListo(){
     const ing=ING().find(x=>x.id==u.iid);if(!ing||!cant)return;
     ing.cant=Math.max(0,ing.cant-cant);
     usados.push({iid:ing.id,cant,tipo:'receta'});
-    movs.push({id:uid(),tipo:'salida',nombre:ing.nombre,cant,costo:0,notas:`Receta pedido #${p.id} - ${p.cliente}`,fecha:new Date().toISOString(),ref:String(p.id)});
+    movs.push({id:uid(),tipo:'salida',nombre:ing.nombre,cant,costo:0,notas:`Receta pedido #${p.id} - ${p.cliente}`,fecha:localISODate(),ref:String(p.id)});
     syncRow('inventario','update',ing,ing.id);
   });
 
@@ -1668,7 +1689,7 @@ function confirmListo(){
     const ing=ING().find(i=>i.id==iid);if(!ing)continue;
     ing.cant=Math.max(0,ing.cant-cant);
     extras.push({iid:ing.id,cant,tipo:'extra-producción'});
-    movs.push({id:uid(),tipo:'salida',nombre:ing.nombre,cant,costo:0,notas:`Extra producción #${p.id} - ${p.cliente}`,fecha:new Date().toISOString(),ref:String(p.id)});
+    movs.push({id:uid(),tipo:'salida',nombre:ing.nombre,cant,costo:0,notas:`Extra producción #${p.id} - ${p.cliente}`,fecha:localISODate(),ref:String(p.id)});
     syncRow('inventario','update',ing,ing.id);
   }
 
@@ -1719,7 +1740,7 @@ function openCobro(id){
     <div style="margin-bottom:12px"><div style="font-size:.86rem;color:var(--ink2)">${p.cliente} — ${p.desc}</div>
       <div style="font-family:Georgia,serif;font-size:1.3rem;color:var(--amber)">Restante: ${money(p.restante)}</div></div>
     <div class="fg"><label class="fl">Monto a cobrar</label><input class="fc" id="cb-monto" type="number" value="${p.restante}" max="${p.restante}"></div>
-    <div class="fg"><label class="fl">Método</label><select class="fc" id="cb-met"><option>Efectivo</option><option>Transferencia</option><option>Tarjeta</option><option>Otro</option></select></div>`;
+    <div class="fg"><label class="fl">Método</label><select class="fc" id="cb-met"><option>Efectivo</option><option>Transferencia</option><option>Tarjeta</option><option value="credito">💰 A Crédito (CxC)</option><option>Otro</option></select></div>`;
   cm('mo-ver');om('mo-cobro');
 }
 function confirmCobro(){
@@ -1734,6 +1755,14 @@ function confirmCobro(){
   p.restante=Math.max(0,prevRest-monto);if(p.restante===0)p.pagado=true;p.updated=new Date().toISOString();
   syncRow('pedidos','update',p,p.id);
   // Register payment on today's date
+  // If credit, register as CxC instead of direct payment
+  if(metodo==='credito'){
+    const cxcEntry={id:uid(),tercero:p.cliente,concepto:`Pedido: ${p.desc}`,monto,abonado:0,saldo:monto,estado:'pendiente',
+      fecha:today(),vencimiento:'',notas:`Pedido #${p.id}`,created:new Date().toISOString(),updated:new Date().toISOString()};
+    if(!DB.cxc) DB.cxc=[];
+    DB.cxc.push(cxcEntry);syncRow('cxc','write',cxcEntry,cxcEntry.id);
+    toast('💰 Registrado en Cuentas por Cobrar');cm('mo-cobro');renderV(CUR);return;
+  }
   const pago={id:uid(),pedidoId:p.id,cliente:p.cliente,monto,tipo:'cobro',fecha:today(),metodo:metodo||'Efectivo',created:new Date().toISOString()};
   DB.pagos.push(pago);syncRow('pagos','write',pago,pago.id);
   cm('mo-cobro');
@@ -2214,6 +2243,32 @@ function renderRep(tab){
 
   if(tab==='ventas'){
     // Last 7 days of the selected period
+    // ── Comparative charts data ──
+    // Last 6 months bar chart
+    const last6Months=[];
+    for(let i=5;i>=0;i--){
+      const d=new Date();d.setDate(1);d.setMonth(d.getMonth()-i);
+      const mStr=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+      const lbl=d.toLocaleDateString('es',{month:'short',year:'2-digit'});
+      const mPagos=(DB.pagos||[]).filter(pg=>{const f=normFecha(pg.fecha);return f&&f.startsWith(mStr);}).reduce((s,pg)=>s+N(pg.monto),0);
+      const mVentas=(DB.ventas||[]).filter(v=>normFecha(v.fecha).startsWith(mStr)).reduce((s,v)=>s+N(v.total),0);
+      last6Months.push({lbl,mStr,total:Math.max(mPagos,mVentas)});
+    }
+    const mx6=Math.max(...last6Months.map(m=>m.total),1);
+
+    // Current vs previous year monthly comparison
+    const curYear=new Date().getFullYear();
+    const prevYear=curYear-1;
+    const yearCompar=[];
+    for(let m=0;m<12;m++){
+      const mStr=String(m+1).padStart(2,'0');
+      const lbl=new Date(curYear,m,1).toLocaleDateString('es',{month:'short'});
+      const curPagos=(DB.pagos||[]).filter(pg=>{const f=normFecha(pg.fecha);return f&&f.startsWith(`${curYear}-${mStr}`);}).reduce((s,pg)=>s+N(pg.monto),0);
+      const prevPagos=(DB.pagos||[]).filter(pg=>{const f=normFecha(pg.fecha);return f&&f.startsWith(`${prevYear}-${mStr}`);}).reduce((s,pg)=>s+N(pg.monto),0);
+      yearCompar.push({lbl,cur:curPagos,prev:prevPagos});
+    }
+    const mxYC=Math.max(...yearCompar.flatMap(m=>[m.cur,m.prev]),1);
+
     const filtEnd=new Date(filtMes+'-28');
     const dias=[];
     for(let i=6;i>=0;i--){
@@ -2256,6 +2311,43 @@ function renderRep(tab){
       <div class="cbar-wrap">${dias.map(d=>`<div class="cbar-row"><div class="cbar-label">${d.lbl}</div><div class="cbar-bg"><div class="cbar-fill" style="width:${Math.round(d.t/mx*100)}%;background:var(--amber)"></div></div><div class="cbar-val">${money(d.t)}</div></div>`).join('')}</div>
     </div>
     ${diasMes.length?`<div class="card"><div class="card-hd">📅 Cobros diarios — ${mesLbl}</div><div class="cbar-wrap">${diasMes.map(d=>`<div class="cbar-row"><div class="cbar-label">Día ${d.d}</div><div class="cbar-bg"><div class="cbar-fill" style="width:${Math.round(d.t/mxM*100)}%;background:var(--sage)"></div></div><div class="cbar-val">${money(d.t)}</div></div>`).join('')}</div></div>`:''}
+    <div class="card">
+      <div class="card-hd">📊 Últimos 6 meses</div>
+      <div class="cbar-wrap">${last6Months.map(m=>`<div class="cbar-row">
+        <div class="cbar-label" style="font-size:.62rem">${m.lbl}</div>
+        <div class="cbar-bg"><div class="cbar-fill" style="width:${Math.round(m.total/mx6*100)}%;background:${m.mStr===filtMes?'var(--amber)':'var(--blue2)'}"></div></div>
+        <div class="cbar-val" style="font-size:.65rem">${money(m.total)}</div>
+      </div>`).join('')}</div>
+    </div>
+    <div class="card">
+      <div class="card-hd">📈 ${curYear} vs ${prevYear} (por mes)</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:6px">
+        <div style="display:flex;align-items:center;gap:5px;font-size:.7rem"><div style="width:12px;height:4px;background:var(--amber);border-radius:2px"></div>${curYear}</div>
+        <div style="display:flex;align-items:center;gap:5px;font-size:.7rem"><div style="width:12px;height:4px;background:var(--sage);border-radius:2px"></div>${prevYear}</div>
+      </div>
+      ${yearCompar.map(m=>`<div style="display:flex;align-items:center;gap:5px;margin-bottom:5px">
+        <div style="font-size:.62rem;color:var(--ink3);width:32px;flex-shrink:0">${m.lbl}</div>
+        <div style="flex:1">
+          <div style="height:7px;background:rgba(0,0,0,.06);border-radius:4px;overflow:hidden;margin-bottom:2px">
+            <div style="height:100%;width:${Math.round(m.cur/mxYC*100)}%;background:var(--amber);border-radius:4px"></div>
+          </div>
+          <div style="height:7px;background:rgba(0,0,0,.06);border-radius:4px;overflow:hidden">
+            <div style="height:100%;width:${Math.round(m.prev/mxYC*100)}%;background:var(--sage);border-radius:4px"></div>
+          </div>
+        </div>
+        <div style="font-size:.6rem;color:var(--ink3);width:44px;text-align:right;flex-shrink:0">${money(m.cur)}</div>
+      </div>`).join('')}
+    </div>
+    <div class="card">
+      <div class="card-hd">💹 Ganancia estimada — últimos 6 meses</div>
+      <div class="cbar-wrap">${last6Months.map(m=>{
+        const mp=PEDS_DB().filter(p=>normFecha(p.fecha).startsWith(m.mStr)&&p.estado!=='cancelado');
+        const costoMp=mp.reduce((s,p)=>{const parseA2=v=>Array.isArray(v)?v:(typeof v==='string'?JSON.parse(v||'[]'):[]);return s+[...parseA2(p.ingsUsados),...parseA2(p.extrasProduccion)].reduce((ss,u)=>{const i=ING().find(x=>x.id==u.iid);return ss+(i?.costo?N(i.costo)*N(u.cant):0);},0);},0);
+        const gM=m.total-costoMp;
+        return `<div class="cbar-row"><div class="cbar-label" style="font-size:.62rem">${m.lbl}</div><div class="cbar-bg"><div class="cbar-fill" style="width:${Math.round(Math.max(gM,0)/mx6*100)}%;background:${gM>=0?'var(--sage)':'var(--rust2)'}"></div></div><div class="cbar-val" style="font-size:.65rem;color:${gM>=0?'var(--ok)':'var(--danger)'}">${money(gM)}</div></div>`;
+      }).join('')}
+      <div style="font-size:.68rem;color:var(--ink3);margin-top:6px;font-style:italic">* Ganancia = cobrado − costo de ingredientes</div>
+    </div>
     <div class="card"><div class="card-hd">📋 Detalle de cobros — ${mesLbl}</div>
     ${pagosMes.length?pagosMes.map(pg=>`<div class="li"><div class="la bg-c">💰</div><div class="lb"><div class="lt">${pg.cliente||'—'}</div><div class="ls">${pg.tipo} · ${fDate(pg.fecha)} · ${pg.metodo||'—'}</div></div><div class="lm"><div class="lamt">${money(pg.monto)}</div></div></div>`).join('')
     :`<div class="empty" style="padding:12px"><div class="empty-t">Sin cobros en este período</div></div>`}
@@ -2339,7 +2431,14 @@ function renderRep(tab){
     </div>`;
 
   } else if(tab==='productos'){
-    const cnt={};PEDS_DB().filter(p=>p.estado!=='cancelado').forEach(p=>{const k=(p.desc||'').split(' ').slice(0,4).join(' ');cnt[k]=(cnt[k]||0)+N(p.total);});
+    const cnt={};
+    // From pedidos
+    PEDS_DB().filter(p=>p.estado!=='cancelado').forEach(p=>{const k=(p.desc||'').split(' ').slice(0,4).join(' ');cnt[k]=(cnt[k]||0)+N(p.total);});
+    // From ventas de caja
+    (DB.ventas||[]).forEach(v=>{
+      const items=Array.isArray(v.items)?v.items:(typeof v.items==='string'?JSON.parse(v.items||'[]'):[]);
+      items.forEach(i=>{const k=i.nombre.split(' ').slice(0,4).join(' ');cnt[k]=(cnt[k]||0)+N(i.precio)*N(i.cant);});
+    });
     const sorted=Object.entries(cnt).sort((a,b)=>b[1]-a[1]).slice(0,8),mx=sorted[0]?.[1]||1;
     const cols=['var(--amber)','var(--rust2)','var(--sage)','var(--gold2)','var(--mauve)'];
     cont.innerHTML=`<div class="card"><div class="card-hd">🏆 Más vendidos (histórico)</div><div class="cbar-wrap">${sorted.length?sorted.map((s,i)=>`<div class="cbar-row"><div class="cbar-label" style="font-size:.6rem">${s[0].slice(0,15)}</div><div class="cbar-bg"><div class="cbar-fill" style="width:${Math.round(s[1]/mx*100)}%;background:${cols[i%5]}"></div></div><div class="cbar-val">${money(s[1])}</div></div>`).join(''):`<div class="empty" style="padding:14px"><div class="empty-t">Sin datos</div></div>`}</div></div>
@@ -2404,6 +2503,14 @@ function renderAlertas(){
   let prob=false;Object.entries(sn).forEach(([iid,need])=>{const i=ING().find(x=>x.id==iid);if(i&&i.cant<need){html+=alHTML('al-pur','🧂',`Faltará: ${i.nombre}`,`Necesitas ${R(need)} ${i.unidad}. Stock: ${R(i.cant)}`);prob=true;}});
   if(!prob)html+=alHTML('al-ok','✅','Stock suficiente','Insumos suficientes para pedidos próximos');
 
+  // e-CF alerts
+  if(ECF&&ECF.rnc){
+    const ecfAlerts=checkEcfAlerts();
+    if(ecfAlerts.length){
+      html+=`<div class="shd" style="margin-top:7px"><h3>🧾 Alertas Comprobantes ECF</h3></div>`;
+      ecfAlerts.forEach(a=>html+=alHTML('al-'+a.nivel,'🧾',a.msg,a.det));
+    }
+  }
   // CXP vencidas
   html+=`<div class="shd" style="margin-top:7px"><h3>💳 Cuentas por Pagar Vencidas</h3><button class="btn-link" onclick="sv('cxp')">Ver →</button></div>`;
   const cxpVenc=(DB.cxp||[]).filter(x=>x.estado!=='pagada'&&x.vencimiento&&normFecha(x.vencimiento)<today());
@@ -2545,7 +2652,14 @@ function saveConfig(){
 /* ═══════════════════════════════════════════════════════
    FACTURACIÓN
 ═══════════════════════════════════════════════════════ */
-function nextFacNum(){const n=CFG.facnum||1;CFG.facnum=n+1;LS.s('dg_cfg',CFG);return(CFG.prefix||'FAC-')+String(n).padStart(4,'0');}
+function nextFacNum(){
+  const n=parseInt(CFG.facnum)||1;
+  CFG.facnum=n+1;
+  LS.s('dg_cfg',CFG);
+  // Persist to Sheets immediately so number survives refresh
+  syncRow('config','write',{id:'facnum',key:'facnum',value:String(CFG.facnum),updated:new Date().toISOString()},'facnum');
+  return (CFG.prefix||'FAC-')+String(n).padStart(4,'0');
+}
 function facHeader(tipo,num,fecha){
   const neg=CFG.nombre||'Mi Repostería';
   const hora=new Date().toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit'});
@@ -2777,7 +2891,26 @@ window.addEventListener('load',()=>{
         if(isLicExpired()&&SESSION.perfil!=='developer'){SESSION=null;LS.s('dg_session',null);showLogin();return;}
         bootApp();
         // refresh data every 60s
-        setInterval(()=>loadAllData().then(()=>renderV(CUR)),60000);
+        // Real-time sync every 15 seconds — only refresh data, update UI non-disruptively
+        setInterval(async()=>{
+          const ok=await loadAllData();
+          if(ok){
+            // Update notification badge and inicio stats silently
+            if(CUR==='inicio') renderInicio();
+            else {
+              // Just update the badge
+              const _nS=ING().filter(i=>N(i.cant)<=N(i.min)).length;
+              const _nU=urgentes().length;
+              const _nC=PEDS_DB().filter(p=>N(p.restante)>0&&p.estado!=='cancelado').length;
+              const _nSol=(DB.solicitudes||[]).filter(s=>s.estado==='nueva').length;
+              const _nCXPv=(DB.cxp||[]).filter(x=>x.estado!=='pagada'&&x.vencimiento&&normFecha(x.vencimiento)<today()).length;
+              const _nCXCv=(DB.cxc||[]).filter(x=>x.estado!=='pagada'&&x.vencimiento&&normFecha(x.vencimiento)<today()).length;
+              const tot=_nS+_nU+_nC+_nSol+_nCXPv+_nCXCv;
+              const nb=document.getElementById('nbadge');
+              if(nb){nb.textContent=tot||'';nb.style.display=tot?'':'none';}
+            }
+          }
+        },15000);
         flushQueue();
       });
     } else {
@@ -2831,6 +2964,7 @@ function saveEcf(){
   ECF.rnc        = document.getElementById('ecf-rnc').value.trim();
   ECF.nombreCom  = document.getElementById('ecf-nombre-com').value.trim();
   ECF.regimen    = document.getElementById('ecf-regimen').value;
+  ECF.itbis      = parseInt(document.getElementById('ecf-itbis-rate')?.value)||18;
   // Collect enabled types
   const tipos = [];
   for(let n=0;n<ecfTiposCnt;n++){
@@ -2838,11 +2972,126 @@ function saveEcf(){
     if(sel && sel.value) tipos.push(sel.value);
   }
   if(tipos.length) ECF.tiposHabilitados = [...new Set(tipos)];
+  // Collect rangos
+  const rangos=[];
+  for(let n=0;n<(ecfRangosCnt||0);n++){
+    const tipo=document.getElementById(`ecf-r-tipo-${n}`)?.value;
+    const desde=parseInt(document.getElementById(`ecf-r-desde-${n}`)?.value)||0;
+    const hasta=parseInt(document.getElementById(`ecf-r-hasta-${n}`)?.value)||0;
+    const proximo=parseInt(document.getElementById(`ecf-r-proximo-${n}`)?.value)||desde;
+    const vence=document.getElementById(`ecf-r-vence-${n}`)?.value||'';
+    if(tipo&&desde&&hasta) rangos.push({tipo,desde,hasta,proximo:Math.max(proximo,desde),vencimiento:vence});
+  }
+  if(rangos.length) ECF.rangos=rangos;
   LS.s('dg_ecf', ECF);
-  // Sync to sheets config
   syncRow('config','write',{id:'ecf_config',key:'ecf_config',value:JSON.stringify(ECF),updated:new Date().toISOString()},'ecf_config');
   toast('✅ Configuración ECF guardada');
+  renderEcfTipos();
   renderEcfSecuencias();
+  renderEcfRangos();
+}
+
+let ecfRangosCnt=0;
+function addEcfRango(pre){
+  const wrap=document.getElementById('ecf-rangos-list'); if(!wrap) return;
+  const n=ecfRangosCnt++;
+  const div=document.createElement('div');
+  div.id=`ecf-rango-row-${n}`;
+  div.style.cssText='background:var(--paper);border-radius:var(--r8);padding:10px;margin-bottom:8px;border:1px solid var(--border);';
+  div.innerHTML=`
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:7px">
+      <div style="font-size:.74rem;font-weight:700;color:var(--ink2)">Rango ${n+1}</div>
+      <button onclick="document.getElementById('ecf-rango-row-${n}').remove()" style="background:rgba(192,48,42,.1);border:none;color:var(--danger);border-radius:6px;cursor:pointer;font-size:.85rem;padding:2px 8px">✕</button>
+    </div>
+    <div class="fg"><label class="fl">Tipo de Comprobante</label>
+      <select class="fc" id="ecf-r-tipo-${n}" style="font-size:.78rem">
+        ${ECF_TIPOS_DGII.map(t=>`<option value="${t.codigo}"${pre?.tipo===t.codigo?' selected':''}>${t.codigo} — ${t.nombre}</option>`).join('')}
+      </select>
+    </div>
+    <div class="fr3">
+      <div class="fg"><label class="fl">Desde N°</label>
+        <input class="fc" id="ecf-r-desde-${n}" type="number" value="${pre?.desde||''}" placeholder="1" oninput="syncProximo(${n})"></div>
+      <div class="fg"><label class="fl">Hasta N°</label>
+        <input class="fc" id="ecf-r-hasta-${n}" type="number" value="${pre?.hasta||''}" placeholder="1000"></div>
+      <div class="fg"><label class="fl">Próximo a emitir</label>
+        <input class="fc" id="ecf-r-proximo-${n}" type="number" value="${pre?.proximo||pre?.desde||''}" placeholder="1"></div>
+    </div>
+    <div class="fg"><label class="fl">Fecha vencimiento del rango</label>
+      <input class="fc" id="ecf-r-vence-${n}" type="date" value="${pre?.vencimiento||''}"></div>
+    <div id="ecf-r-status-${n}" style="font-size:.72rem;margin-top:4px"></div>`;
+  wrap.appendChild(div);
+  if(pre) updateRangoStatus(n,pre);
+}
+
+function syncProximo(n){
+  const desde=document.getElementById(`ecf-r-desde-${n}`)?.value;
+  const prox=document.getElementById(`ecf-r-proximo-${n}`);
+  if(prox&&!prox.value&&desde) prox.value=desde;
+}
+
+function updateRangoStatus(n,rango){
+  const el=document.getElementById(`ecf-r-status-${n}`); if(!el) return;
+  const total=rango.hasta-rango.desde+1;
+  const used=(rango.proximo||rango.desde)-rango.desde;
+  const restantes=rango.hasta-(rango.proximo||rango.desde)+1;
+  const pct=Math.round((used/total)*100);
+  const vencido=rango.vencimiento&&normFecha(rango.vencimiento)<today();
+  const agotando=restantes<=Math.max(10,Math.round(total*0.1));
+  el.innerHTML=`<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <span style="color:${agotando?'var(--danger)':vencido?'var(--danger)':'var(--ok)'}">
+      ${vencido?'⛔ VENCIDO':agotando?'⚠️ Por agotarse':'✅ Activo'}
+    </span>
+    <span style="color:var(--ink3)">Usados: ${used}/${total} (${pct}%) · Restantes: ${restantes}</span>
+    ${rango.vencimiento?`<span style="color:${vencido?'var(--danger)':'var(--ink3)'}">Vence: ${fDate(normFecha(rango.vencimiento))}</span>`:''}
+  </div>`;
+}
+
+function renderEcfRangos(){
+  const wrap=document.getElementById('ecf-rangos-list'); if(!wrap) return;
+  wrap.innerHTML=''; ecfRangosCnt=0;
+  const rangos=ECF.rangos||[];
+  if(!rangos.length){ wrap.innerHTML='<div style="font-size:.78rem;color:var(--ink3);font-style:italic;margin-bottom:8px">Sin rangos configurados. Agrega los rangos asignados por la DGII.</div>'; return; }
+  rangos.forEach(r=>addEcfRango(r));
+}
+
+function checkEcfAlerts(){
+  const alerts=[];
+  const rangos=ECF.rangos||[];
+  const hoy=today();
+  rangos.forEach(r=>{
+    const restantes=r.hasta-(r.proximo||r.desde)+1;
+    const total=r.hasta-r.desde+1;
+    const tipo=ECF_TIPOS_DGII.find(t=>t.codigo===r.tipo);
+    const nombre=tipo?.nombre||r.tipo;
+    if(r.vencimiento&&normFecha(r.vencimiento)<hoy)
+      alerts.push({nivel:'dgr',msg:`e-CF VENCIDO: ${nombre}`,det:`Rango ${generarNCF(r.tipo,r.desde)} al ${generarNCF(r.tipo,r.hasta)} venció el ${fDate(normFecha(r.vencimiento))}`});
+    else if(r.vencimiento){
+      const diasVenc=Math.ceil((new Date(normFecha(r.vencimiento))-new Date())/(1000*60*60*24));
+      if(diasVenc<=30) alerts.push({nivel:'wrn',msg:`e-CF por vencer: ${nombre} en ${diasVenc} días`,det:`Vence: ${fDate(normFecha(r.vencimiento))}`});
+    }
+    if(restantes<=0) alerts.push({nivel:'dgr',msg:`e-CF AGOTADO: ${nombre}`,det:`Rango agotado. Solicita nuevos comprobantes a la DGII.`});
+    else if(restantes<=Math.max(10,Math.round(total*0.1))) alerts.push({nivel:'wrn',msg:`e-CF por agotarse: ${nombre}`,det:`Solo quedan ${restantes} comprobantes disponibles.`});
+  });
+  return alerts;
+}
+
+// Override nextNCF to use rangos when available
+function nextNCF(tipoCod){
+  // Try to use rango first
+  const rango=(ECF.rangos||[]).find(r=>r.tipo===tipoCod&&r.proximo<=r.hasta);
+  if(rango){
+    const ncf=generarNCF(tipoCod,rango.proximo);
+    rango.proximo=(rango.proximo||rango.desde)+1;
+    LS.s('dg_ecf',ECF);
+    syncRow('config','write',{id:'ecf_config',key:'ecf_config',value:JSON.stringify(ECF),updated:new Date().toISOString()},'ecf_config');
+    return ncf;
+  }
+  // Fallback to old sequence
+  if(!ECF.secuencias) ECF.secuencias={};
+  const n=ECF.secuencias[tipoCod]||1;
+  ECF.secuencias[tipoCod]=n+1;
+  LS.s('dg_ecf',ECF);
+  return generarNCF(tipoCod,n);
 }
 
 function addEcfTipo(preVal){
@@ -2868,37 +3117,29 @@ function renderEcfTipos(){
 function renderEcfSecuencias(){
   const wrap = document.getElementById('ecf-secuencias'); if(!wrap) return;
   const tipos = ECF.tiposHabilitados||[];
+  const rangos = ECF.rangos||[];
   wrap.innerHTML = tipos.map(cod=>{
     const tipo = ECF_TIPOS_DGII.find(t=>t.codigo===cod);
-    const seq  = (ECF.secuencias||{})[cod] || 1;
-    const ncf  = generarNCF(cod, seq);
-    return `<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--paper);border-radius:8px;margin-bottom:5px;border:1px solid var(--border)">
+    const rango = rangos.find(r=>r.tipo===cod);
+    const proximo = rango?rango.proximo:(ECF.secuencias||{})[cod]||1;
+    const ncf = generarNCF(cod, proximo);
+    const restantes = rango?(rango.hasta-rango.proximo+1):null;
+    const agotando = restantes!==null&&restantes<=Math.max(10,Math.round((rango.hasta-rango.desde+1)*0.1));
+    return `<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--paper);border-radius:8px;margin-bottom:5px;border:1px solid ${agotando?'var(--danger)':'var(--border)'}">
       <div style="flex:1">
         <div style="font-size:.78rem;font-weight:700;color:var(--ink)">${tipo?.nombre||cod}</div>
-        <div style="font-size:.68rem;color:var(--ink3)">Próximo NCF: <b style="color:var(--amber)">${ncf}</b></div>
-      </div>
-      <div style="display:flex;gap:5px;align-items:center">
-        <label style="font-size:.65rem;color:var(--ink3)">Desde N°</label>
-        <input type="number" value="${seq}" min="1" id="ecf-seq-${cod}"
-          style="width:60px;padding:5px 7px;border:1.5px solid var(--border2);border-radius:7px;font-size:.78rem;background:#fff;outline:none"
-          onchange="ECF.secuencias['${cod}']=parseInt(this.value)||1;LS.s('dg_ecf',ECF);renderEcfSecuencias()">
+        <div style="font-size:.68rem;color:var(--ink3)">Próximo: <b style="color:var(--amber)">${ncf}</b>
+          ${restantes!==null?` · Restantes: <b style="color:${agotando?'var(--danger)':'var(--ok)'}">${restantes}</b>`:''}</div>
       </div>
     </div>`;
   }).join('') || '<div style="font-size:.78rem;color:var(--ink3);font-style:italic">No hay tipos habilitados aún</div>';
 }
 
 function generarNCF(tipoCod, seq){
-  // Format: E + tipo(2) + serie(8) padded → e.g. E310000000001
   return `E${tipoCod}${String(seq).padStart(10,'0')}`;
 }
 
-function nextNCF(tipoCod){
-  if(!ECF.secuencias) ECF.secuencias={};
-  const n = ECF.secuencias[tipoCod] || 1;
-  ECF.secuencias[tipoCod] = n + 1;
-  LS.s('dg_ecf', ECF);
-  return generarNCF(tipoCod, n);
-}
+
 
 // Open ECF emitter for a pedido
 function openEcfEmitir(pedId){
@@ -3054,7 +3295,10 @@ function loadConfigForm(){
       document.getElementById('ecf-rnc').value        = ECF.rnc||'';
       document.getElementById('ecf-nombre-com').value = ECF.nombreCom||'';
       document.getElementById('ecf-regimen').value    = ECF.regimen||'ordinario';
+      const itbisEl=document.getElementById('ecf-itbis-rate');
+      if(itbisEl) itbisEl.value=ECF.itbis||18;
       renderEcfTipos();
+      renderEcfRangos();
       renderEcfSecuencias();
     }
   }
@@ -3162,7 +3406,7 @@ function renderVentas(){
 
   const prodsHTML = allProds.map(p=>`
     <button onclick="agregarItemVenta('${p.id}','${p.nombre.replace(/'/g,"\\'")}',${p.precio},'${p.tipo}','${p.ingId||''}')"
-      style="background:var(--paper3);border:1.5px solid var(--border);border-radius:var(--r8);padding:8px 10px;cursor:pointer;text-align:left;transition:all .15s;width:100%">
+      style="background:var(--paper3);border:1.5px solid var(--border);border-radius:var(--r8);padding:8px 10px;cursor:pointer;text-align:left;transition:all .15s;width:100%;opacity:${(p.tipo==='inventario'&&ING().find(i=>i.id==p.ingId)&&N(ING().find(i=>i.id==p.ingId).cant)<=0)?'0.45':'1'}">
       <div style="font-size:.8rem;font-weight:700;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.nombre}</div>
       <div style="font-size:.72rem;color:var(--amber);font-weight:700;margin-top:2px">${money(p.precio)}${p.unidad?' /'+p.unidad:''}</div>
       <div style="font-size:.64rem;color:var(--ink3)">${p.tipo==='inventario'?'📦 Producto/Inventario':'🎂 '+p.cat}</div>
@@ -3236,7 +3480,7 @@ function cobrarVenta(){
   const desc  = N(ventaActiva.descuento);
   const totalFinal = Math.max(0, total - desc);
   // Show cobro modal
-  const metSelect = ['Efectivo','Transferencia','Tarjeta','Otro'].map(m=>`<option>${m}</option>`).join('');
+  const metSelect = ['Efectivo','Transferencia','Tarjeta','A Crédito (CxC)','Otro'].map(m=>`<option>${m}</option>`).join('');
   const cont = document.getElementById('cobro-content');
   if(cont){
     cont.innerHTML=`
@@ -3266,6 +3510,27 @@ function calcCambio(){
 async function confirmarCobroVenta(){
   const metodo = document.getElementById('venta-metodo')?.value||'Efectivo';
   const total = ventaActiva.items.reduce((s,i)=>s+N(i.precio)*N(i.cant),0) - N(ventaActiva.descuento);
+  // Stock validation before selling
+  for(const item of ventaActiva.items){
+    if(item.tipo==='inventario'&&item.ingId){
+      const ing=ING().find(i=>i.id==item.ingId);
+      if(ing&&N(ing.cant)<N(item.cant)){
+        toast(`❌ Sin stock: ${ing.nombre} (disponible: ${R(ing.cant)} ${ing.unidad})`);return;
+      }
+    } else if(item.tipo==='producto'){
+      const pid=item.id.replace('p_','');
+      const prod=PRODS_DB().find(p=>p.id==pid);
+      if(prod){
+        const ings=Array.isArray(prod.ings)?prod.ings:(typeof prod.ings==='string'?JSON.parse(prod.ings||'[]'):[]);
+        for(const u of ings){
+          const ing=ING().find(i=>i.id==u.iid);
+          if(ing&&N(ing.cant)<N(u.cant)*N(item.cant)){
+            toast(`❌ Sin stock de ${ing.nombre} para ${prod.nombre} (necesario: ${R(N(u.cant)*N(item.cant))}, disponible: ${R(ing.cant)})`);return;
+          }
+        }
+      }
+    }
+  }
   const v = {
     id: uid(), cliente: ventaActiva.cliente||'Mostrador',
     items: JSON.stringify(ventaActiva.items),
@@ -3276,7 +3541,16 @@ async function confirmarCobroVenta(){
   DB.ventas.push(v);
   syncRow('ventas','write',v,v.id);
 
-  // Registrar pago
+  // If credit, register as CxC
+  if(metodo==='A Crédito (CxC)'){
+    const cxcV={id:uid(),tercero:v.cliente,concepto:`Venta: ${ventaActiva.items.map(i=>i.nombre).join(', ')}`,monto:total,abonado:0,saldo:total,
+      estado:'pendiente',fecha:today(),vencimiento:'',notas:`Venta caja #${v.id}`,created:new Date().toISOString(),updated:new Date().toISOString()};
+    if(!DB.cxc) DB.cxc=[];
+    DB.cxc.push(cxcV);syncRow('cxc','write',cxcV,cxcV.id);
+    cm('mo-cobro');toast('💰 Registrado en Cuentas por Cobrar');
+    ventaActiva={items:[],cliente:'',descuento:0};renderVentas();return;
+  }
+  // Registrar pago normal
   const pg={id:uid(),pedidoId:v.id,cliente:v.cliente,monto:total,tipo:'venta-caja',fecha:today(),metodo,created:new Date().toISOString()};
   DB.pagos.push(pg); syncRow('pagos','write',pg,pg.id);
 
@@ -3288,7 +3562,7 @@ async function confirmarCobroVenta(){
       if(ing){
         ing.cant=Math.max(0,ing.cant-item.cant);
         syncRow('inventario','update',ing,ing.id);
-        movs.push({id:uid(),tipo:'salida',nombre:ing.nombre,cant:item.cant,costo:0,notas:`Venta caja — ${v.cliente}`,fecha:new Date().toISOString(),ref:String(v.id)});
+        movs.push({id:uid(),tipo:'salida',nombre:ing.nombre,cant:item.cant,costo:0,notas:`Venta caja — ${v.cliente}`,fecha:localISODate(),ref:String(v.id)});
       }
     } else if(item.tipo==='producto'){
       // Descontar ingredientes de la receta del producto
@@ -3302,7 +3576,7 @@ async function confirmarCobroVenta(){
           const consume=N(u.cant)*item.cant;
           ing.cant=Math.max(0,ing.cant-consume);
           syncRow('inventario','update',ing,ing.id);
-          movs.push({id:uid(),tipo:'salida',nombre:ing.nombre,cant:consume,costo:0,notas:`Venta caja — ${prod.nombre} ×${item.cant}`,fecha:new Date().toISOString(),ref:String(v.id)});
+          movs.push({id:uid(),tipo:'salida',nombre:ing.nombre,cant:consume,costo:0,notas:`Venta caja — ${prod.nombre} ×${item.cant}`,fecha:localISODate(),ref:String(v.id)});
         });
       }
     }
