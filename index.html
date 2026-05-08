@@ -359,7 +359,7 @@ select.fc{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
 
     <!-- RECETAS -->
     <div class="vw" id="vw-recetas">
-      <div class="shd"><h3>🎂 Catálogo de Productos</h3><button class="btn btn-amber btn-sm" onclick="openRec(null)">+ Nuevo</button></div>
+      <div class="shd"><h3>🎂 Catálogo de Productos</h3><div style="display:flex;gap:6px"><button class="btn btn-ghost btn-sm" onclick="compartirCatalogo()">📤 Menú</button><button class="btn btn-amber btn-sm" onclick="openRec(null)">+ Nuevo</button></div></div>
       <div id="rec-list"></div>
     </div>
 
@@ -1269,10 +1269,10 @@ function cm(id){document.getElementById(id).classList.remove('on');}
 let tT;
 function toast(msg){const el=document.getElementById('toast');el.textContent=msg;el.classList.add('on');clearTimeout(tT);tT=setTimeout(()=>el.classList.remove('on'),2700);}
 function setMsg(id,msg,color){const el=document.getElementById(id);if(el){el.textContent=msg;el.style.color=color;}}
-const today=()=>new Date().toISOString().slice(0,10);
+const today=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;};
 const N=v=>parseFloat(v)||0;
 const R=v=>{const n=N(v);return n%1===0?n:parseFloat(n.toFixed(3));};
-const fDate=s=>{if(!s)return'';try{const str=String(s).trim();if(/^\d{4}-\d{2}-\d{2}/.test(str)){const[y,m,d]=str.split('-');return`${d}/${m}/${y}`;}if(/^\d{2}\/\d{2}\/\d{4}/.test(str))return str;const d=new Date(str);if(!isNaN(d))return d.toLocaleDateString('es',{day:'2-digit',month:'2-digit',year:'numeric'});}catch{}return String(s).slice(0,10);};
+const fDate=s=>{if(!s)return'';try{const[a,b,d]=String(s).slice(0,10).split('-');if(a&&b&&d)return`${d}/${b}/${a}`;}catch{}return String(s).slice(0,10);};
 
 function localISODate(){
   const d=new Date();
@@ -2063,10 +2063,80 @@ function regMov(tipo){
   toast(`✅ ${tipo==='entrada'?'Entrada':'Salida'} registrada`);renderStock();
   document.querySelectorAll('#tabs-inv .tab').forEach((t,i)=>t.classList.toggle('on',i===0));invTab='stock';
 }
+function editarEntrada(id){
+  const m=DB.movimientos.find(x=>String(x.id)===String(id));
+  if(!m||m.tipo!=='entrada'){toast('Solo se pueden editar entradas');return;}
+  const cantOld=N(m.cant);
+  const nuevaCant=parseFloat(prompt('Cantidad nueva (actual: '+R(cantOld)+' '+(m.unidad||'')+'):', cantOld));
+  if(isNaN(nuevaCant)||nuevaCant<0) return;
+  const nuevoCosto=parseFloat(prompt('Costo total nuevo (actual: '+(money(m.costo||0))+'):', m.costo||0))||0;
+  const diff=nuevaCant-cantOld;
+  // Find ingredient by name (best effort)
+  const ing=ING().find(i=>i.nombre&&m.nombre&&i.nombre.toLowerCase()===m.nombre.toLowerCase());
+  if(ing){
+    ing.cant=Math.max(0,N(ing.cant)+diff);
+    ing.updated=new Date().toISOString();
+    syncRow('inventario','update',ing,ing.id);
+  }
+  m.cant=nuevaCant; m.costo=nuevoCosto; m.notas=(m.notas||'')+(diff!==0?' [editado]':'');
+  m.updated=new Date().toISOString();
+  syncRow('movimientos','update',m,m.id);
+  toast('✅ Entrada actualizada — stock ajustado');
+  renderMovs();
+}
+
+function eliminarVenta(id){
+  if(!confirm('¿Eliminar venta y devolver stock al inventario?')) return;
+  const v=DB.ventas.find(x=>String(x.id)===String(id));
+  if(!v){toast('Venta no encontrada');return;}
+  const items=Array.isArray(v.items)?v.items:(typeof v.items==='string'?JSON.parse(v.items||'[]'):[]);
+  // Return stock
+  items.forEach(item=>{
+    if(item.tipo==='inventario'&&item.ingId){
+      const ing=ING().find(i=>String(i.id)===String(item.ingId));
+      if(ing){ing.cant=N(ing.cant)+N(item.cant);ing.updated=new Date().toISOString();syncRow('inventario','update',ing,ing.id);}
+    } else if(item.tipo==='producto'){
+      const pr=PRODS_DB().find(p=>String(p.id)===String(item.id.replace('p_','')));
+      if(pr){
+        const ings=Array.isArray(pr.ings)?pr.ings:(typeof pr.ings==='string'?JSON.parse(pr.ings||'[]'):[]);
+        ings.forEach(u=>{const ing=ING().find(i=>i.id==u.iid);if(ing){ing.cant=N(ing.cant)+N(u.cant)*N(item.cant);ing.updated=new Date().toISOString();syncRow('inventario','update',ing,ing.id);}});
+      }
+    }
+  });
+  // Remove pago
+  DB.pagos=DB.pagos.filter(pg=>String(pg.pedidoId)!==String(id));
+  syncRow('pagos','delete',null,id);
+  // Remove venta
+  DB.ventas=DB.ventas.filter(x=>String(x.id)!==String(id));
+  syncRow('ventas','delete',null,id);
+  toast('🗑 Venta eliminada — stock devuelto');
+  renderVentas();
+}
+
+function compartirCatalogo(){
+  const cats={};
+  PRODS_DB().forEach(p=>{const cat=p.cat||'General';if(!cats[cat])cats[cat]=[];cats[cat].push(p);});
+  const NL='\n';
+  let txt=(CFG.nombre||'DulceGestion')+' - Menu'+NL;
+  if(CFG.eslogan) txt+='('+CFG.eslogan+')'+NL;
+  txt+=NL;
+  Object.entries(cats).forEach(([cat,prods])=>{
+    txt+='== '+cat.toUpperCase()+' =='+NL;
+    prods.forEach(p=>{txt+='* '+p.nombre+' - '+money(p.precio)+(p.porciones?' ('+p.porciones+' porciones)':'')+NL;});
+    txt+=NL;
+  });
+  if(CFG.tel) txt+='Tel: '+CFG.tel+NL;
+  if(CFG.redes) txt+'Redes: '+CFG.redes+NL;
+  txt+=NL+'(Precios sujetos a cambios)';
+  if(navigator.share) navigator.share({title:(CFG.nombre||'Menu'),text:txt}).catch(()=>{});
+  else if(navigator.clipboard) navigator.clipboard.writeText(txt).then(()=>toast('\u{1F4CB} Catálogo copiado'));
+  else { const w=window.open('','_blank');if(w)w.document.write('<pre>'+txt+'</pre>'); }
+}
+
 function renderMovs(){
   const cont=document.getElementById('inv-content');const ms=[...DB.movimientos].reverse().slice(0,80);
   if(!ms.length){cont.innerHTML=emptyHTML('📋','Sin movimientos');return;}
-  cont.innerHTML=`<div class="card"><div class="card-hd">📋 Movimientos</div>`+ms.map(m=>`<div class="li"><div class="la ${m.tipo==='entrada'?'bg-c':'bg-b'}">${m.tipo==='entrada'?'📥':'📤'}</div><div class="lb"><div class="lt">${m.nombre}</div><div class="ls">${m.notas||m.tipo} · ${new Date(m.fecha).toLocaleDateString('es')}</div></div><div class="lm"><div class="lamt" style="color:${m.tipo==='entrada'?'var(--sage)':'var(--rust2)'}">${m.tipo==='entrada'?'+':'-'}${R(m.cant)}</div>${m.costo?`<div style="font-size:.66rem;color:var(--ink3)">${money(m.costo)}</div>`:''}</div></div>`).join('')+`</div>`;
+  cont.innerHTML=`<div class="card"><div class="card-hd">📋 Movimientos</div>`+ms.map(m=>`<div class="li"><div class="la ${m.tipo==='entrada'?'bg-c':'bg-b'}">${m.tipo==='entrada'?'📥':'📤'}</div><div class="lb"><div class="lt">${m.nombre}</div><div class="ls">${m.notas||m.tipo} · ${new Date(m.fecha).toLocaleDateString('es')}</div></div><div class="lm"><div class="lamt" style="color:${m.tipo==='entrada'?'var(--sage)':'var(--rust2)'}">${m.tipo==='entrada'?'+':'-'}${R(m.cant)}</div>${m.costo?`<div style="font-size:.66rem;color:var(--ink3)">${money(m.costo)}</div>`:''}${can('editar_inventario')&&m.tipo==='entrada'?`<button onclick="editarEntrada('${m.id}')" style="background:none;border:none;color:var(--amber);cursor:pointer;font-size:.8rem" title="Editar entrada">✏️</button>`:''}</div></div>`).join('')+`</div>`;
 }
 
 /* ═══════════════════════════════════════════════════════
@@ -2354,48 +2424,48 @@ function renderRep(tab){
     </div>`;
 
   } else if(tab==='pnl'){
-    // PnL uses PAYMENT DATE (pagos) for income, not delivery date
-    const pagosMes=(DB.pagos||[]).filter(pg=>{const f=normFecha(pg.fecha);return f&&f.startsWith(filtMes);});
-    const ingresosCobrados=pagosMes.reduce((s,pg)=>s+N(pg.monto),0);
-    // CXC cobradas this month
-    const cxcCobradas=(DB.cxc||[]).filter(x=>x.estado==='pagada'&&x.updated&&x.updated.startsWith(filtMes)).reduce((s,x)=>s+N(x.monto),0);
-    // CXP pagadas this month (as expense)
-    const cxpPagadas=(DB.cxp||[]).filter(x=>x.estado==='pagada'&&x.updated&&x.updated.startsWith(filtMes)).reduce((s,x)=>s+N(x.monto),0);
+    const mesLbl=new Date(filtMes+'-02').toLocaleDateString('es',{month:'long',year:'numeric'});
+    const pA2=v=>{if(!v||v===''||v==='null')return[];if(Array.isArray(v))return v;let sv=String(v);for(let ii=0;ii<3;ii++){sv=sv.trim();if(!sv.startsWith('[')&&!sv.startsWith('{'))break;try{const pp=JSON.parse(sv);if(Array.isArray(pp))return pp;if(typeof pp==='string'){sv=pp;continue;}break;}catch{break;}}return[];};
 
-    // Pending (agreed but not yet received)
+    // INGRESOS — pagos recibidos en el mes (anticipo, cobro, venta-caja)
+    const pagosMesPnl=(DB.pagos||[]).filter(pg=>{const f=normFecha(pg.fecha);return f&&f.startsWith(filtMes)&&!String(pg.tipo||'').includes('cxp');});
+    const ingresosCobrados=pagosMesPnl.reduce((s,pg)=>s+N(pg.monto),0);
+    const ingPedidos=pagosMesPnl.filter(pg=>['anticipo','cobro'].includes(pg.tipo)).reduce((s,pg)=>s+N(pg.monto),0);
+    const ingCaja=pagosMesPnl.filter(pg=>pg.tipo==='venta-caja').reduce((s,pg)=>s+N(pg.monto),0);
+    const ingOtros=ingresosCobrados-ingPedidos-ingCaja;
     const pendMes=PEDS_DB().filter(p=>{const f=normFecha(p.fecha);return f.startsWith(filtMes)&&p.estado!=='cancelado';}).reduce((s,p)=>s+N(p.restante),0);
 
-    // Cost of production: ingredients used in pedidos whose delivery is in this month
-    const pedsMes=PEDS_DB().filter(p=>{const f=normFecha(p.fecha);return f.startsWith(filtMes)&&p.estado!=='cancelado';});
-    const costoP=pedsMes.reduce((s,p)=>{
-      const parseA=v=>{
-    if(!v||v===''||v==='null') return [];
-    if(Array.isArray(v)) return v;
-    let s=typeof v==='string'?v:String(v);
-    for(let i=0;i<3;i++){s=s.trim();if(!s.startsWith('[')&&!s.startsWith('{'))break;try{const p=JSON.parse(s);if(Array.isArray(p))return p;if(typeof p==='string'){s=p;continue;}break;}catch{break;}}
-    return [];
-  };
-      const iU=parseA(p.ingsUsados);const eP=parseA(p.extrasProduccion);
-      return s+[...iU,...eP].reduce((ss,u)=>{const i=ING().find(x=>x.id==u.iid);return ss+(i?.costo?N(i.costo)*N(u.cant):0);},0);
-    },0);
+    // COSTO DE VENTAS
+    const pedsMes=PEDS_DB().filter(p=>{const f=normFecha(p.fecha);return f.startsWith(filtMes)&&(p.estado==='entregado'||p.estado==='listo');});
+    const costoIngPedidos=pedsMes.reduce((s,p)=>{return s+[...pA2(p.ingsUsados),...pA2(p.extrasProduccion)].reduce((ss,u)=>{const i=ING().find(x=>x.id==u.iid);return ss+(i?.costo?N(i.costo)*N(u.cant):0);},0);},0);
+    const ventasMesPnl=(DB.ventas||[]).filter(v=>normFecha(v.fecha).startsWith(filtMes));
+    const costoVentasCaja=ventasMesPnl.reduce((s,v)=>{return s+pA2(v.items).reduce((ss,item)=>{
+      if(item.tipo==='inventario'&&item.ingId){const ing=ING().find(i=>i.id==item.ingId);return ss+(ing?.costo?N(ing.costo)*N(item.cant):0);}
+      if(item.tipo==='producto'){const pr=PRODS_DB().find(p=>p.id==item.id.replace('p_',''));if(!pr)return ss;return ss+pA2(pr.ings).reduce((sss,u)=>{const i=ING().find(x=>x.id==u.iid);return sss+(i?.costo?N(i.costo)*N(u.cant)*N(item.cant):0);},0);}
+      return ss;},0);},0);
+    const costoVentas=costoIngPedidos+costoVentasCaja;
 
-    // Purchases (inventory entradas) in this month — treated as expense
-    const comprasMes=DB.movimientos.filter(m=>m.tipo==='entrada'&&m.fecha&&String(m.fecha).slice(0,7)===filtMes&&N(m.costo)>0);
-    const totalCompras=comprasMes.reduce((s,m)=>s+N(m.costo),0);
+    // GASTOS OPERATIVOS
+    const gastosMesPnl=DB.gastos.filter(g=>g.fecha&&normFecha(g.fecha).startsWith(filtMes));
+    const tGpnl=gastosMesPnl.reduce((s,g)=>s+N(g.monto),0);
+    const gbcPnl={};gastosMesPnl.forEach(g=>{gbcPnl[g.cat]=(gbcPnl[g.cat]||0)+N(g.monto);});
 
-    // Operating expenses
-    const gastosMes=DB.gastos.filter(g=>g.fecha&&g.fecha.startsWith(filtMes));
-    const tG=gastosMes.reduce((s,g)=>s+N(g.monto),0);
-    const gbc={};gastosMes.forEach(g=>{gbc[g.cat]=(gbc[g.cat]||0)+N(g.monto);});
+    // CXP PAGADAS este mes
+    const cxpPagadasPnl=(DB.cxp||[]).filter(x=>{if(x.estado!=='pagada')return false;const f=normFecha((x.updated||'').slice(0,10));return f&&f.startsWith(filtMes);}).reduce((s,x)=>s+N(x.monto),0);
 
-    // Inventory value
-    const valorInv=ING().reduce((s,i)=>s+(N(i.costo)*N(i.cant)),0);
+    // COMPRAS DE INVENTARIO (informativo)
+    const comprasMesPnl=DB.movimientos.filter(m=>m.tipo==='entrada'&&m.fecha&&normFecha(m.fecha).startsWith(filtMes)&&N(m.costo)>0);
+    const totalComprasPnl=comprasMesPnl.reduce((s,m)=>s+N(m.costo),0);
 
-    const ub=ingresosCobrados-costoP;
-    const un=ub-tG-totalCompras-cxpPagadas;
-    const mb=ingresosCobrados>0?Math.round(ub/ingresosCobrados*100):0;
-    const mn=ingresosCobrados>0?Math.round(un/ingresosCobrados*100):0;
-    const mesLbl=new Date(filtMes+'-02').toLocaleDateString('es',{month:'long',year:'numeric'});
+    // VALOR INVENTARIO
+    const valorInvPnl=ING().reduce((s,i)=>s+(N(i.costo)*N(i.cant)),0);
+
+    // CALCULOS
+    const utilidadBruta=ingresosCobrados-costoVentas;
+    const totalEgresosPnl=tGpnl+cxpPagadasPnl;
+    const utilidadNeta=utilidadBruta-totalEgresosPnl;
+    const mbPnl=ingresosCobrados>0?Math.round(utilidadBruta/ingresosCobrados*100):0;
+    const mnPnl=ingresosCobrados>0?Math.round(utilidadNeta/ingresosCobrados*100):0;
 
     cont.innerHTML=`<div class="card">
       <div class="card-hd">📊 Estado de Resultados — ${mesLbl}</div>
@@ -2407,16 +2477,16 @@ function renderRep(tab){
       <div class="pnl-section"><div class="pnl-section-title">🧂 Costo de Producción</div>
         <div class="pnl-row"><span class="pnl-label">Ingredientes usados en pedidos</span><span class="pnl-val pnl-negative">-${money(costoP)}</span></div>
       </div>
-      <div class="pnl-row" style="padding:9px 0;border-top:1.5px solid var(--border2)"><span style="font-weight:700">Utilidad Bruta</span><span class="pnl-val ${ub>=0?'pnl-positive':'pnl-negative'}">${money(ub)} <span style="font-size:.65rem">(${mb}%)</span></span></div>
+      <div class="pnl-row" style="padding:9px 0;border-top:1.5px solid var(--border2)"><span style="font-weight:700">Utilidad Bruta</span><span class="pnl-val ${utilidadBruta>=0?'pnl-positive':'pnl-negative'}">${money(utilidadBruta)} <span style="font-size:.65rem">(${mbPnl}%)</span></span></div>
       <div class="pnl-section" style="margin-top:4px"><div class="pnl-section-title">💸 Gastos y Compras</div>
-        ${cxpPagadas>0?`<div class="pnl-row"><span class="pnl-label">💳 CxP pagadas este período</span><span class="pnl-val pnl-negative">-${money(cxpPagadas)}</span></div>`:''}
-        ${totalCompras>0?`<div class="pnl-row"><span class="pnl-label">🛒 Compras de inventario (${comprasMes.length} entradas)</span><span class="pnl-val pnl-negative">-${money(totalCompras)}</span></div>`:''}
-        ${Object.entries(gbc).map(([cat,v])=>`<div class="pnl-row"><span class="pnl-label">${cat}</span><span class="pnl-val pnl-negative">-${money(v)}</span></div>`).join('')}
-        ${!gastosMes.length&&!totalCompras?`<div style="font-size:.77rem;color:var(--ink3);font-style:italic;padding:3px 0">Sin gastos registrados</div>`:''}
-        <div class="pnl-row" style="border-top:1px solid var(--border);margin-top:3px;padding-top:7px"><span style="font-weight:600">Total Egresos</span><span class="pnl-val pnl-negative">-${money(tG+totalCompras+cxpPagadas)}</span></div>
+        ${cxpPagadasPnl>0?`<div class="pnl-row"><span class="pnl-label">💳 Pagos cuentas por pagar</span><span class="pnl-val pnl-negative">-${money(cxpPagadasPnl)}</span></div>`:''}
+        ${totalComprasPnl>0?`<div class="pnl-row"><span class="pnl-label" style="font-size:.78rem;color:var(--ink3)">ℹ️ Compras inventario (${comprasMesPnl.length} entradas, solo info)</span><span class="pnl-val" style="font-size:.82rem;color:var(--ink2)">${money(totalComprasPnl)}</span></div>`:''}
+        ${Object.entries(gbcPnl).map(([cat,v])=>`<div class="pnl-row"><span class="pnl-label">${cat}</span><span class="pnl-val pnl-negative">-${money(v)}</span></div>`).join('')}
+        ${!gastosMesPnl.length&&!cxpPagadasPnl?`<div style="font-size:.77rem;color:var(--ink3);font-style:italic;padding:3px 0">Sin gastos registrados</div>`:''}
+        <div class="pnl-row" style="border-top:1px solid var(--border);margin-top:3px;padding-top:7px"><span style="font-weight:600">Total Egresos</span><span class="pnl-val pnl-negative">-${money(totalEgresosPnl)}</span></div>
       </div>
-      <div class="pnl-total"><span class="pnl-total-label">UTILIDAD NETA</span><span class="pnl-total-val ${un>=0?'pnl-positive':'pnl-negative'}">${money(un)}</span></div>
-      <div style="text-align:right;font-size:.72rem;color:${mn>=0?'var(--ok)':'var(--danger)'};font-weight:700;margin-top:1px">Margen neto: ${mn}%</div>
+      <div class="pnl-total"><span class="pnl-total-label">UTILIDAD NETA</span><span class="pnl-total-val ${utilidadNeta>=0?'pnl-positive':'pnl-negative'}">${money(utilidadNeta)}</span></div>
+      <div style="text-align:right;font-size:.72rem;color:${mnPnl>=0?'var(--ok)':'var(--danger)'};font-weight:700;margin-top:1px">Margen neto: ${mnPnl}%</div>
     </div>
     <div class="card">
       <div class="card-hd">📦 Valor del Inventario Actual</div>
@@ -2425,9 +2495,9 @@ function renderRep(tab){
       ${ING().filter(i=>N(i.costo)>0&&N(i.cant)>0).map(i=>{const v=N(i.costo)*N(i.cant);return`<div class="pnl-row"><span class="pnl-label">${i.nombre} (${R(i.cant)} ${i.unidad})</span><span class="pnl-val" style="font-size:.88rem">${money(v)}</span></div>`;}).join('')}
     </div>
     <div class="card"><div class="card-hd">💸 Detalle de Gastos — ${mesLbl}</div>
-    ${gastosMes.length?gastosMes.map(g=>`<div class="li"><div class="la bg-b">💸</div><div class="lb"><div class="lt">${g.concepto}</div><div class="ls">${g.cat} · ${fDate(g.fecha)}</div></div><div class="lm"><div class="lamt" style="color:var(--rust2)">${money(g.monto)}</div>${can('ver_gastos')?`<button onclick="if(confirm('¿Eliminar?')){DB.gastos=DB.gastos.filter(x=>x.id!=${g.id});syncRow('gastos','delete',null,${g.id});renderRep('pnl')}" style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:.78rem">✕</button>`:''}</div></div>`).join('')
+    ${gastosMesPnl.length?gastosMesPnl.map(g=>`<div class="li"><div class="la bg-b">💸</div><div class="lb"><div class="lt">${g.concepto}</div><div class="ls">${g.cat} · ${fDate(normFecha(g.fecha))}</div></div><div class="lm"><div class="lamt" style="color:var(--rust2)">${money(g.monto)}</div>${can('ver_gastos')?`<button onclick="if(confirm('¿Eliminar?')){DB.gastos=DB.gastos.filter(x=>x.id!=${g.id});syncRow('gastos','delete',null,${g.id});renderRep('pnl')}" style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:.78rem">✕</button>`:''}</div></div>`).join('')
     :`<div class="empty" style="padding:12px"><div class="empty-t">Sin gastos</div></div>`}
-    ${comprasMes.length?`<div style="font-size:.72rem;font-weight:700;color:var(--ink3);margin:8px 0 4px;letter-spacing:.2px">🛒 COMPRAS DE INVENTARIO</div>`+comprasMes.map(m=>`<div class="li"><div class="la bg-c">🛒</div><div class="lb"><div class="lt">${m.nombre}</div><div class="ls">${R(m.cant)} unid · ${new Date(m.fecha).toLocaleDateString('es')}</div></div><div class="lm"><div class="lamt" style="color:var(--rust2)">${money(m.costo)}</div></div></div>`).join(''):''}
+    ${comprasMes.length?`<div style="font-size:.72rem;font-weight:700;color:var(--ink3);margin:8px 0 4px;letter-spacing:.2px">🛒 COMPRAS DE INVENTARIO</div>`+comprasMesPnl.map(m=>`<div class="li"><div class="la bg-c">🛒</div><div class="lb"><div class="lt">${m.nombre}</div><div class="ls">${R(m.cant)} unid · ${new Date(m.fecha).toLocaleDateString('es')}</div></div><div class="lm"><div class="lamt" style="color:var(--rust2)">${money(m.costo)}</div></div></div>`).join(''):''}
     </div>`;
 
   } else if(tab==='productos'){
@@ -3626,7 +3696,10 @@ function renderVentasHistorial(cont){
         <div class="lm">
           <div class="lamt">${money(v.total)}</div>
           <div style="font-size:.68rem;color:var(--ink3)">${v.metodo||''}</div>
-          ${can('imprimir')?`<button onclick="imprimirReciboVenta(DB.ventas.find(x=>x.id==${v.id}||x.id==='${v.id}'))" style="background:none;border:none;color:var(--amber);cursor:pointer;font-size:.75rem">🖨</button>`:''}
+          <div style="display:flex;gap:3px;flex-wrap:wrap;margin-top:3px">
+            ${can('imprimir')?`<button onclick="imprimirReciboVenta(DB.ventas.find(x=>x.id==${v.id}||x.id==='${v.id}'))" style="background:none;border:none;color:var(--amber);cursor:pointer;font-size:.8rem" title="Imprimir">🖨</button>`:''}
+            ${can('crear_ventas')?`<button onclick="eliminarVenta('${v.id}')" style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:.8rem" title="Eliminar y devolver stock">🗑</button>`:''}
+          </div>
         </div>
       </div>`;
     }).join('')+`</div>`;
