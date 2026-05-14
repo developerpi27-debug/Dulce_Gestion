@@ -788,12 +788,12 @@ async function loadAllData(){
   }catch(e){console.warn('loadAllData:',e.message);return false;}
 }
 
-/* FIX #2: syncRow con update si existe, write si no */
 async function syncRow(sheet,action,data,id){
   try{
-    if(action==='write')await apiCall({action:'write',sheet,data});
-    if(action==='update')await apiCall({action:'update',sheet,id,data});
-    if(action==='delete')await apiCall({action:'delete',sheet,id});
+    if(action==='write')  await apiCall({action:'write', sheet, data});
+    if(action==='update') await apiCall({action:'update',sheet, id, data});
+    if(action==='delete') await apiCall({action:'delete',sheet, id});
+    if(action==='upsert') await apiCall({action:'upsert',sheet, data});
   }catch(e){
     syncQueue.push({sheet,action,data,id,ts:Date.now()});
     LS.s('dg_queue',syncQueue);
@@ -801,17 +801,18 @@ async function syncRow(sheet,action,data,id){
   }
 }
 
-/* FIX #2: upsertConfig — actualiza si existe la key, crea si no */
-async function upsertConfig(key,value){
-  const existing=DB.config.find(r=>r.key===key||r.id===key);
-  const row={id:key,key,value:String(value),updated:new Date().toISOString()};
-  if(existing){
-    Object.assign(existing,row);
-    await syncRow('config','update',row,key);
-  }else{
-    DB.config.push(row);
-    await syncRow('config','write',row,key);
-  }
+/* upsertConfig — siempre usa acción 'upsert' en el backend.
+   El backend busca la fila por 'key', la actualiza si existe, la crea si no.
+   Nunca genera filas duplicadas. */
+async function upsertConfig(key, value){
+  const strVal = String(value);
+  // Actualizar cache local
+  const existing = DB.config.find(r => r.key === key || r.id === key);
+  const row = { id: key, key, value: strVal, updated: new Date().toISOString() };
+  if(existing){ Object.assign(existing, row); }
+  else { DB.config.push(row); }
+  // Enviar al backend con acción upsert (update-or-insert)
+  await apiCall({ action: 'upsert', sheet: 'config', data: row });
 }
 
 async function flushQueue(){
@@ -825,7 +826,7 @@ async function flushQueue(){
 }
 
 /* ═══════════════════════════════════════
-   CONFIG SAVE — FIX: secuencial + pausa auto-refresh
+   CONFIG SAVE — secuencial, pausa auto-refresh, upsert
 ═══════════════════════════════════════ */
 async function saveConfig(){
   if(isSavingConfig){toast('⏳ Guardado en progreso...');return;}
@@ -834,31 +835,53 @@ async function saveConfig(){
   if(btn){btn.textContent='⏳ Guardando...';btn.disabled=true;}
 
   // Leer valores del formulario
-  const fields={nombre:'nombre',eslogan:'eslogan',tel:'tel',email:'email',dir:'dir',redes:'redes',nit:'nit',moneda:'moneda',pie:'pie',condiciones:'condiciones',gracias:'gracias',prefix:'prefix',facnum:'facnum','lic-fecha':'licFecha','lic-dias':'licDias'};
-  Object.entries(fields).forEach(([k,v])=>{const el=document.getElementById('cfg-'+k);if(el)CFG[v]=el.value;});
-  CFG.facnum=parseInt(CFG.facnum)||1;
-  CFG.licDias=parseInt(CFG.licDias)||7;
-  if(can('config_limite')){const lEl=document.getElementById('cfg-limite');if(lEl)CFG.limitePedidos=parseInt(lEl.value)||0;}
-  const wsEl=document.getElementById('cfg-ws');if(wsEl)CFG.wsNumero=wsEl.value.trim();
-  if(SESSION?.perfil==='developer'){const ri=document.getElementById('cfg-refresh-interval');if(ri)CFG.refreshInterval=Math.max(15,parseInt(ri.value)||60);}
+  const fields={nombre:'nombre',eslogan:'eslogan',tel:'tel',email:'email',dir:'dir',
+    redes:'redes',nit:'nit',moneda:'moneda',pie:'pie',condiciones:'condiciones',
+    gracias:'gracias',prefix:'prefix',facnum:'facnum',
+    'lic-fecha':'licFecha','lic-dias':'licDias'};
+  Object.entries(fields).forEach(([k,v])=>{
+    const el=document.getElementById('cfg-'+k);
+    if(el) CFG[v]=el.value;
+  });
+  CFG.facnum   = parseInt(CFG.facnum)||1;
+  CFG.licDias  = parseInt(CFG.licDias)||7;
+  if(can('config_limite')){
+    const lEl=document.getElementById('cfg-limite');
+    if(lEl) CFG.limitePedidos=parseInt(lEl.value)||0;
+  }
+  const wsEl=document.getElementById('cfg-ws');
+  if(wsEl) CFG.wsNumero=wsEl.value.trim();
+  if(SESSION?.perfil==='developer'){
+    const ri=document.getElementById('cfg-refresh-interval');
+    if(ri) CFG.refreshInterval=Math.max(15,parseInt(ri.value)||60);
+  }
   LS.s('dg_cfg',CFG);
 
-  // Guardar en Sheets de forma SECUENCIAL (uno por uno) para evitar conflictos
-  // FIX: usa upsertConfig que hace update si ya existe la key
-  const keysToSave=Object.keys(CFG).filter(k=>k!=='ecf_config');
-  try{
-    for(const k of keysToSave){
+  // Guardar en Sheets de forma SECUENCIAL con upsert
+  // Excluir ecf_config (tiene su propio botón) y claves vacías
+  const skip=['ecf_config'];
+  const keysToSave=Object.keys(CFG).filter(k=>!skip.includes(k));
+  let saved=0, failed=0;
+  for(const k of keysToSave){
+    try{
       await upsertConfig(k, CFG[k]);
+      saved++;
+    }catch(e){
+      failed++;
+      console.warn('Error guardando key',k,e.message);
     }
-    toast('✅ Configuración guardada en Sheets');
-    // Reiniciar auto-refresh con nuevo intervalo si cambió
-    startAutoRefresh();
-  }catch(e){
-    toast('⚠️ Error parcial al guardar: '+e.message);
-  }finally{
-    isSavingConfig=false;
-    if(btn){btn.textContent='💾 Guardar Configuración';btn.disabled=false;}
   }
+
+  isSavingConfig=false;
+  if(btn){btn.textContent='💾 Guardar Configuración';btn.disabled=false;}
+
+  if(failed===0){
+    toast(`✅ Configuración guardada (${saved} campos)`);
+  } else {
+    toast(`⚠️ Guardado parcial: ${saved} OK, ${failed} fallaron`);
+  }
+  // Reiniciar auto-refresh con nuevo intervalo si cambió
+  startAutoRefresh();
 }
 
 async function saveEcf(){
