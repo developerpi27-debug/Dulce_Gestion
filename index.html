@@ -363,6 +363,13 @@ select.fc{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
         <div class="fg"><label class="fl">Intervalo en segundos (mín. 15, recomendado 60)</label><input class="fc" id="cfg-refresh-interval" type="number" min="15" max="300" placeholder="60"></div>
       </div>
 
+      <!-- Inactividad -->
+      <div class="card" id="inactivity-card" style="display:none;margin-top:4px">
+        <div class="card-hd">⏱️ Cierre por Inactividad <span style="font-size:.63rem;color:var(--ink3)">(Developer)</span></div>
+        <div class="al al-info" style="margin-bottom:8px"><div class="al-i">🔒</div><div><div class="al-t">Seguridad de sesión</div><div class="al-s">La sesión se cerrará automáticamente si el usuario no tiene actividad durante el tiempo indicado. Usa 0 para desactivar.</div></div></div>
+        <div class="fg"><label class="fl">Tiempo de inactividad en minutos (0 = desactivado)</label><input class="fc" id="cfg-inactivity-timeout" type="number" min="0" max="480" placeholder="0"></div>
+      </div>
+
       <!-- ECF -->
       <div class="card" id="ecf-card" style="display:none;margin-top:4px">
         <div class="card-hd">🧾 Comprobantes Fiscales ECF <span style="font-size:.63rem;color:var(--ink3)">(DGII)</span></div>
@@ -678,7 +685,7 @@ const ECF_TIPOS_DGII=[
 ═══════════════════════════════════════ */
 const LS={g:(k,d)=>{try{return JSON.parse(localStorage.getItem(k))??d}catch{return d}},s:(k,v)=>localStorage.setItem(k,JSON.stringify(v))};
 let DB={config:[],usuarios:[],perfiles:[],pedidos:[],inventario:[],productos:[],movimientos:[],cotizaciones:[],gastos:[],pagos:[],ventas:[],solicitudes:[],extras_pedidos:[],cxp:[],cxc:[]};
-let CFG=LS.g('dg_cfg',{nombre:'DulceGestión',eslogan:'',tel:'',email:'',dir:'',redes:'',nit:'',moneda:'RD$',pie:'Gracias por su preferencia.',condiciones:'50% anticipo, saldo contra entrega.',gracias:'¡Gracias por confiar en nosotros!',prefix:'FAC-',facnum:1,licFecha:'',licDias:7,limitePedidos:0,wsNumero:'',refreshInterval:60});
+let CFG=LS.g('dg_cfg',{nombre:'DulceGestión',eslogan:'',tel:'',email:'',dir:'',redes:'',nit:'',moneda:'RD$',pie:'Gracias por su preferencia.',condiciones:'50% anticipo, saldo contra entrega.',gracias:'¡Gracias por confiar en nosotros!',prefix:'FAC-',facnum:1,licFecha:'',licDias:7,limitePedidos:0,wsNumero:'',refreshInterval:60,inactivityTimeout:0});
 let ECF=LS.g('dg_ecf',{rnc:'',nombreCom:'',regimen:'ordinario',tiposHabilitados:['32','31'],secuencias:{'31':1,'32':1,'33':1,'34':1},rangos:[],itbis:18});
 let SCRIPT_URL=LS.g('dg_url','');
 let SESSION=LS.g('dg_session',null);
@@ -687,6 +694,8 @@ let autoRefreshInterval=null;
 let lastDataHash='';
 let isRefreshing=false;
 let isSavingConfig=false; // FIX: flag para pausar auto-refresh mientras se guarda config
+let inactivityTimer=null;
+let lastActivity=Date.now();
 
 /* ═══════════════════════════════════════
    AUTO-REFRESH — respeta guardado activo
@@ -710,6 +719,28 @@ function startAutoRefresh(){
     }catch{}
     isRefreshing=false;
   },interval);
+}
+/* ═══════════════════════════════════════
+   INACTIVIDAD — cierre automático de sesión
+═══════════════════════════════════════ */
+function startInactivityTimer(){
+  stopInactivityTimer();
+  const mins=parseInt(CFG.inactivityTimeout)||0;
+  if(!mins||mins<=0)return;
+  const ms=mins*60*1000;
+  function resetTimer(){lastActivity=Date.now();}
+  ['click','touchstart','keydown','mousemove','scroll'].forEach(ev=>document.addEventListener(ev,resetTimer,{passive:true}));
+  inactivityTimer=setInterval(()=>{
+    if(!SESSION)return;
+    if((Date.now()-lastActivity)>=ms){
+      stopInactivityTimer();
+      toast('🔒 Sesión cerrada por inactividad');
+      setTimeout(()=>logout(),800);
+    }
+  },30000); // check every 30s
+}
+function stopInactivityTimer(){
+  if(inactivityTimer){clearInterval(inactivityTimer);inactivityTimer=null;}
 }
 function silentRefresh(){
   const sc=document.getElementById('scroll'),pos=sc?sc.scrollTop:0;
@@ -854,6 +885,8 @@ async function saveConfig(){
   if(SESSION?.perfil==='developer'){
     const ri=document.getElementById('cfg-refresh-interval');
     if(ri) CFG.refreshInterval=Math.max(15,parseInt(ri.value)||60);
+    const it=document.getElementById('cfg-inactivity-timeout');
+    if(it) CFG.inactivityTimeout=Math.max(0,parseInt(it.value)||0);
   }
   LS.s('dg_cfg',CFG);
 
@@ -882,6 +915,7 @@ async function saveConfig(){
   }
   // Reiniciar auto-refresh con nuevo intervalo si cambió
   startAutoRefresh();
+  startInactivityTimer();
 }
 
 async function saveEcf(){
@@ -944,7 +978,7 @@ async function doLogin(){
   LS.s('dg_session',SESSION);user.lastLogin=new Date().toISOString();syncRow('usuarios','update',user,user.id);
   document.getElementById('login-screen').classList.remove('on');bootApp();
 }
-function logout(){SESSION=null;LS.s('dg_session',null);if(autoRefreshInterval){clearInterval(autoRefreshInterval);autoRefreshInterval=null;}document.getElementById('app').classList.remove('on');cm('mo-usermenu');const btn=document.getElementById('login-btn');if(btn){btn.textContent='Ingresar';btn.disabled=false;}document.getElementById('login-err').textContent='';document.getElementById('l-user').value='';document.getElementById('l-pass').value='';showLogin();}
+function logout(){SESSION=null;LS.s('dg_session',null);if(autoRefreshInterval){clearInterval(autoRefreshInterval);autoRefreshInterval=null;}stopInactivityTimer();document.getElementById('app').classList.remove('on');cm('mo-usermenu');const btn=document.getElementById('login-btn');if(btn){btn.textContent='Ingresar';btn.disabled=false;}document.getElementById('login-err').textContent='';document.getElementById('l-user').value='';document.getElementById('l-pass').value='';showLogin();}
 function can(p){if(!SESSION)return false;if(SESSION.perfil==='developer')return true;if(p==='__developer')return false;return SESSION.perms.includes(p);}
 
 /* ═══════════════════════════════════════
@@ -959,7 +993,7 @@ function bootApp(){
   loadConfigForm();buildRepAnios();buildRepMeses();
   const fv=NAV_ITEMS_ALL.find(item=>{if(item.perm==='__developer')return SESSION.perfil==='developer';return can(item.perm);});
   sv(fv?fv.id:'alertas');
-  lastDataHash=dataHash();startAutoRefresh();flushQueue();
+  lastDataHash=dataHash();startAutoRefresh();startInactivityTimer();flushQueue();
 }
 function buildNav(){document.getElementById('nav-items').innerHTML=NAV_ITEMS_ALL.filter(item=>{if(!item.navInBottom)return false;if(item.perm==='__developer')return SESSION.perfil==='developer';return can(item.perm);}).map(item=>`<button class="nv" id="nv-${item.id}" onclick="sv('${item.id}')"><span class="ni">${item.icon}</span>${item.label}</button>`).join('');}
 const VTITLES={inicio:'Inicio',pedidos:'Pedidos',inventario:'Inventario',recetas:'Catálogo',cotizaciones:'Cotizaciones',reportes:'Reportes',calendario:'Agenda',alertas:'Alertas',usuarios:'Usuarios',perfiles:'Perfiles y Permisos',config:'Configuración',ventas:'Punto de Venta',solicitudes:'Solicitudes',cxp:'Cuentas por Pagar',cxc:'Cuentas por Cobrar'};
@@ -1010,9 +1044,11 @@ function loadConfigForm(){
   document.getElementById('cfg-users-shortcut').style.display=isDev?'':'none';
   document.getElementById('perfiles-cfg-card').style.display=isDev?'':'none';
   document.getElementById('refresh-card').style.display=isDev?'':'none';
+  document.getElementById('inactivity-card').style.display=isDev?'':'none';
   if(isDev){
     const disp=document.getElementById('current-url-display');if(disp)disp.textContent=SCRIPT_URL||'—';
     const ri=document.getElementById('cfg-refresh-interval');if(ri)ri.value=CFG.refreshInterval||60;
+    const it=document.getElementById('cfg-inactivity-timeout');if(it)it.value=CFG.inactivityTimeout||0;
     renderPerfilesCfg();
   }
   const canEcf=can('emitir_ecf')||can('ver_ecf');
@@ -1234,7 +1270,10 @@ function editarEntrada(id){
 ═══════════════════════════════════════ */
 let rIngCnt=0;
 function openRec(id){rIngCnt=0;const p=id?PRODS_DB().find(x=>x.id==id):null;document.getElementById('rec-titulo').textContent=p?'Editar Producto':'Nuevo Producto';document.getElementById('r-edit-id').value=id||'';['r-nombre','r-desc','r-notas'].forEach(x=>{document.getElementById(x).value=p?p[x.slice(2)]||'':'';});document.getElementById('r-cat').value=p?.cat||'Pasteles';document.getElementById('r-precio').value=p?.precio||'';document.getElementById('r-porciones').value=p?.porciones||'';document.getElementById('r-tiempo').value=p?.tiempo||'';const wrap=document.getElementById('r-ings-list');wrap.innerHTML='';const ings=p?(Array.isArray(p.ings)?p.ings:(typeof p.ings==='string'?JSON.parse(p.ings||'[]'):[])):[]; if(ings.length)ings.forEach(u=>addRecRow(u.iid,u.cant));else addRecRow();om('mo-rec');}
-function addRecRow(preIid,preCant){const wrap=document.getElementById('r-ings-list');const n=rIngCnt++;const div=document.createElement('div');div.className='rrow';div.id=`rr-${n}`;div.innerHTML=`<select id="rr-i-${n}" style="padding:6px 8px;border:1.5px solid var(--border2);border-radius:8px;font-size:.74rem;background:var(--paper2);color:var(--ink);outline:none;">${ING().map(i=>`<option value="${i.id}"${i.id==preIid?' selected':''}>${i.nombre}</option>`).join('')}</select><input type="number" step="0.001" id="rr-c-${n}" value="${preCant||''}" placeholder="cant" style="padding:6px 8px;border:1.5px solid var(--border2);border-radius:8px;font-size:.8rem;background:var(--paper2);color:var(--ink);outline:none;"><div id="rr-u-${n}" class="ru">${preIid?(ING().find(i=>i.id==preIid)?.unidad||ING()[0]?.unidad||''):ING()[0]?.unidad||''}</div><button class="del-r" onclick="document.getElementById('rr-${n}').remove()">✕</button>`;wrap.appendChild(div);div.querySelector(`#rr-i-${n}`).addEventListener('change',function(){const i=ING().find(x=>x.id==this.value);if(i)document.getElementById(`rr-u-${n}`).textContent=i.unidad;});}
+function addRecRow(preIid,preCant){const wrap=document.getElementById('r-ings-list');const n=rIngCnt++;const div=document.createElement('div');div.className='rrow';div.id='rr-'+n;
+  const ingsSolo=ING().filter(i=>!i.tipo||i.tipo==='ingrediente'||i.tipo==='');
+  div.innerHTML='<select id="rr-i-'+n+'" style="padding:6px 8px;border:1.5px solid var(--border2);border-radius:8px;font-size:.74rem;background:var(--paper2);color:var(--ink);outline:none;">'+ingsSolo.map(i=>'<option value="'+i.id+'"'+(i.id==preIid?' selected':'')+'>'+i.nombre+'</option>').join('')+'</select><input type="number" step="0.001" id="rr-c-'+n+'" value="'+(preCant||'')+'" placeholder="cant" style="padding:6px 8px;border:1.5px solid var(--border2);border-radius:8px;font-size:.8rem;background:var(--paper2);color:var(--ink);outline:none;"><div id="rr-u-'+n+'" class="ru">'+(preIid?(ingsSolo.find(i=>i.id==preIid)?.unidad||ingsSolo[0]?.unidad||''):ingsSolo[0]?.unidad||'')+'</div><button class="del-r" onclick="document.getElementById(\'rr-'+n+'\').remove()">✕</button>';
+  wrap.appendChild(div);div.querySelector('#rr-i-'+n).addEventListener('change',function(){const i=ingsSolo.find(x=>x.id==this.value);if(i)document.getElementById('rr-u-'+n).textContent=i.unidad;});}
 function saveRec(){const nombre=document.getElementById('r-nombre').value.trim();if(!nombre){toast('❌ Ingresa el nombre');return;}const ings=[];for(let n=0;n<rIngCnt;n++){const ie=document.getElementById(`rr-i-${n}`),ce=document.getElementById(`rr-c-${n}`);if(!ie||!ce)continue;const cant=N(ce.value);if(!cant)continue;ings.push({iid:parseInt(ie.value),cant});}const data={nombre,cat:document.getElementById('r-cat').value,precio:N(document.getElementById('r-precio').value),porciones:parseInt(document.getElementById('r-porciones').value)||0,tiempo:parseInt(document.getElementById('r-tiempo').value)||0,desc:document.getElementById('r-desc').value,notas:document.getElementById('r-notas').value,ings,updated:new Date().toISOString()};const eid=parseInt(document.getElementById('r-edit-id').value)||0;if(eid){const p=PRODS_DB().find(x=>x.id==eid);if(p){Object.assign(p,data);syncRow('productos','update',p,p.id);}}else{const p={id:uid(),...data};DB.productos.push(p);syncRow('productos','write',p,p.id);}cm('mo-rec');toast('✅ Producto guardado');renderRecs();fillRecSel();}
 function renderRecs(){const cont=document.getElementById('rec-list');if(!PRODS_DB().length){cont.innerHTML=emptyHTML('🎂','Sin productos en el catálogo');return;}cont.innerHTML=PRODS_DB().map(p=>{const ings=Array.isArray(p.ings)?p.ings:(typeof p.ings==='string'?JSON.parse(p.ings||'[]'):[]);const costo=ings.reduce((s,u)=>{const i=ING().find(x=>x.id==u.iid);return s+(i?.costo?i.costo*u.cant:0);},0);const margen=p.precio>0?Math.round(((p.precio-costo)/p.precio)*100):0;const mc=margen>55?'var(--ok)':margen>30?'var(--warn)':'var(--danger)';const ingsH=ings.map(u=>{const i=ING().find(x=>x.id==u.iid);if(!i)return'';const ok=i.cant>=u.cant;return`<div class="ic-row"><span class="ic-name">${i.nombre}</span><span class="ic-qty" style="color:${ok?'var(--amber)':'var(--danger)'}">${R(u.cant)}</span><span class="ic-unit">${i.unidad}</span><span class="ic-stock ${ok?'ok':'lo'}">${ok?'✓':'⚠️'}</span></div>`;}).join('');return`<div class="card" style="margin-bottom:11px"><div style="display:flex;align-items:flex-start;justify-content:space-between;gap:7px;margin-bottom:6px"><div><div style="font-family:Georgia,serif;font-size:1rem">${p.nombre}</div><div style="font-size:.68rem;color:var(--ink3)">${p.cat}${p.tiempo?` · ⏱ ${p.tiempo}min`:''}${p.porciones?` · ${p.porciones} porciones`:''}</div></div><div style="text-align:right;flex-shrink:0"><div style="font-family:Georgia,serif;font-size:1.05rem;color:var(--amber)">${money(p.precio)}</div>${costo>0?`<div style="font-size:.65rem;color:${mc};font-weight:700">Costo: ${money(costo)} · ${margen}%</div>`:''}</div></div>${p.desc?`<div style="font-size:.75rem;color:var(--ink2);margin-bottom:7px">${p.desc}</div>`:''}${ingsH||`<div style="font-size:.75rem;color:var(--ink3);font-style:italic">Sin ingredientes</div>`}${p.notas?`<div style="font-size:.7rem;color:var(--ink2);margin-top:6px;background:var(--paper);padding:6px 9px;border-radius:7px">💡 ${p.notas}</div>`:''}${can('editar_recetas')?`<div style="display:flex;gap:6px;margin-top:9px;flex-wrap:wrap"><button class="btn btn-ghost btn-sm" onclick="openRec(${p.id})">✏️ Editar</button><button class="btn btn-amber btn-sm" onclick="pedDesdeRec(${p.id})">📦 Crear Pedido</button><button class="btn btn-rust btn-sm" onclick="delProd(${p.id})">🗑</button></div>`:''}</div>`;}).join('');}
 function delProd(id){if(!confirm('¿Eliminar?'))return;DB.productos=DB.productos.filter(p=>p.id!=id);syncRow('productos','delete',null,id);renderRecs();toast('🗑 Eliminado');}
