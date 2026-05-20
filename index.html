@@ -710,35 +710,41 @@ let lastActivity=Date.now();
    AUTO-REFRESH — siempre re-renderiza tras cargar
 ═══════════════════════════════════════ */
 function dataHash(){
-  // Hash amplio: cubre todos los módulos relevantes
-  const ph=DB.pedidos.map(p=>p.id+'_'+p.estado+'_'+p.restante+'_'+(p.updated||'')).join('|');
-  const ih=DB.inventario.map(i=>i.id+'_'+i.cant+'_'+(i.updated||'')).join('|');
-  const sh=(DB.solicitudes||[]).map(s=>s.id+'_'+s.estado).join('|');
-  const pgh=(DB.pagos||[]).length+'_'+((DB.pagos||[]).reduce((s,p)=>s+Number(p.monto||0),0));
-  const gh=(DB.gastos||[]).length;
-  const vh=(DB.ventas||[]).length;
-  const cxch=(DB.cxc||[]).map(x=>x.id+'_'+x.estado+'_'+(x.saldo||0)).join('|');
-  return [ph,ih,sh,pgh,gh,vh,cxch].join('::');
+  // No usar timestamps (updated) — varían por timezone entre dispositivos
+  const ph=DB.pedidos.map(p=>p.id+'_'+p.estado+'_'+p.restante).sort().join('|');
+  const ih=DB.inventario.map(i=>i.id+'_'+String(i.cant)).sort().join('|');
+  const sh=(DB.solicitudes||[]).map(s=>s.id+'_'+s.estado).sort().join('|');
+  const pgh=(DB.pagos||[]).length+'_'+(DB.pagos||[]).map(p=>p.id).sort().join(',');
+  const gh=(DB.gastos||[]).map(g=>g.id).sort().join(',');
+  const vh=(DB.ventas||[]).map(v=>v.id).sort().join(',');
+  const cxch=(DB.cxc||[]).map(x=>x.id+'_'+x.estado+'_'+x.saldo).sort().join('|');
+  const cfgh=JSON.stringify(CFG);
+  return [ph,ih,sh,pgh,gh,vh,cxch,cfgh].join('::');
 }
 
 function startAutoRefresh(){
   if(autoRefreshInterval)clearInterval(autoRefreshInterval);
-  const interval=Math.max(15,(parseInt(CFG.refreshInterval)||60))*1000;
+  const interval=Math.max(15,(parseInt(CFG.refreshInterval)||20))*1000;
   autoRefreshInterval=setInterval(async()=>{
-    if(!SESSION||isRefreshing||isSavingConfig)return;
+    if(!SESSION)return;
+    if(isRefreshing||isSavingConfig)return;
     isRefreshing=true;
-    const ok=await loadAllData();
-    isRefreshing=false;
-    if(!ok)return;
-    const nh=dataHash();
-    if(nh!==lastDataHash){
-      lastDataHash=nh;
-      // Preservar posición de scroll
-      const sc=document.getElementById('scroll');
-      const pos=sc?sc.scrollTop:0;
-      renderV(CUR);
-      updateBadge();
-      requestAnimationFrame(()=>{if(sc&&pos>0)sc.scrollTop=pos;});
+    try{
+      const ok=await loadAllData();
+      if(!ok){isRefreshing=false;return;}
+      const nh=dataHash();
+      if(nh!==lastDataHash){
+        lastDataHash=nh;
+        const sc=document.getElementById('scroll');
+        const pos=sc?sc.scrollTop:0;
+        renderV(CUR);
+        updateBadge();
+        requestAnimationFrame(()=>{if(sc&&pos>0)sc.scrollTop=pos;});
+      }
+    }catch(e){
+      console.warn('autoRefresh error:',e.message);
+    }finally{
+      isRefreshing=false; // SIEMPRE se resetea, incluso si hay error
     }
   },interval);
 }
@@ -746,13 +752,18 @@ function startAutoRefresh(){
 /* ═══════════════════════════════════════
    INACTIVIDAD — cierre automático de sesión
 ═══════════════════════════════════════ */
+// Referencia fija a la función — necesaria para poder remover el listener correctamente
+function _resetActivity(){lastActivity=Date.now();}
+const ACTIVITY_EVENTS=['click','touchstart','keydown','mousemove','scroll','touchmove'];
+
 function startInactivityTimer(){
   stopInactivityTimer();
   const mins=parseInt(CFG.inactivityTimeout)||0;
   if(!mins||mins<=0)return;
   const ms=mins*60*1000;
-  function resetTimer(){lastActivity=Date.now();}
-  ['click','touchstart','keydown','mousemove','scroll'].forEach(ev=>document.addEventListener(ev,resetTimer,{passive:true}));
+  lastActivity=Date.now(); // Resetear al iniciar
+  // Registrar con función nombrada (se puede remover después)
+  ACTIVITY_EVENTS.forEach(ev=>document.addEventListener(ev,_resetActivity,{passive:true}));
   inactivityTimer=setInterval(()=>{
     if(!SESSION)return;
     if((Date.now()-lastActivity)>=ms){
@@ -760,10 +771,12 @@ function startInactivityTimer(){
       toast('🔒 Sesión cerrada por inactividad');
       setTimeout(()=>logout(),800);
     }
-  },30000);
+  },15000); // Chequear cada 15s para mayor precisión en móvil
 }
 function stopInactivityTimer(){
   if(inactivityTimer){clearInterval(inactivityTimer);inactivityTimer=null;}
+  // Siempre remover listeners aunque no haya timer activo
+  ACTIVITY_EVENTS.forEach(ev=>document.removeEventListener(ev,_resetActivity));
 }
 
 function silentRefresh(){
@@ -960,8 +973,7 @@ async function saveConfig(){
   isSavingConfig=true;
   const btn=document.getElementById('cfg-save-btn');
   if(btn){btn.textContent='⏳ Guardando...';btn.disabled=true;}
-
-  // Leer valores del formulario
+  try{
   const fields={nombre:'nombre',eslogan:'eslogan',tel:'tel',email:'email',dir:'dir',
     redes:'redes',nit:'nit',moneda:'moneda',pie:'pie',condiciones:'condiciones',
     gracias:'gracias',prefix:'prefix',facnum:'facnum',
@@ -1001,8 +1013,10 @@ async function saveConfig(){
     }
   }
 
-  isSavingConfig=false;
-  if(btn){btn.textContent='💾 Guardar Configuración';btn.disabled=false;}
+  }finally{
+    isSavingConfig=false;
+    if(btn){btn.textContent='💾 Guardar Configuración';btn.disabled=false;}
+  }
 
   if(failed===0){
     toast(`✅ Configuración guardada (${saved} campos)`);
@@ -1099,7 +1113,8 @@ function bootApp(){
   loadConfigForm();buildRepAnios();buildRepMeses();
   const fv=NAV_ITEMS_ALL.find(item=>{if(item.perm==='__developer')return SESSION.perfil==='developer';return can(item.perm);});
   sv(fv?fv.id:'alertas');
-  lastDataHash=dataHash();startAutoRefresh();startInactivityTimer();flushQueue();
+  lastDataHash=''; // Vacío para forzar render en el primer ciclo
+  startAutoRefresh();startInactivityTimer();flushQueue();
 }
 function buildNav(){document.getElementById('nav-items').innerHTML=NAV_ITEMS_ALL.filter(item=>{if(!item.navInBottom)return false;if(item.perm==='__developer')return SESSION.perfil==='developer';return can(item.perm);}).map(item=>`<button class="nv" id="nv-${item.id}" onclick="sv('${item.id}')"><span class="ni">${item.icon}</span>${item.label}</button>`).join('');}
 const VTITLES={inicio:'Inicio',pedidos:'Pedidos',inventario:'Inventario',recetas:'Catálogo',cotizaciones:'Cotizaciones',reportes:'Reportes',calendario:'Agenda',alertas:'Alertas',usuarios:'Usuarios',perfiles:'Perfiles y Permisos',config:'Configuración',ventas:'Punto de Venta',solicitudes:'Solicitudes',cxp:'Cuentas por Pagar',cxc:'Cuentas por Cobrar'};
