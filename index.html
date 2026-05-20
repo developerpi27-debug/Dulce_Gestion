@@ -1588,9 +1588,13 @@ function renderRep(tab){
     const mesLbl=new Date(filtMes+'-02').toLocaleDateString('es',{month:'long',year:'numeric'});
     const pA=v=>{if(!v||v===''||v==='null')return[];if(Array.isArray(v))return v;let s=String(v);for(let i=0;i<3;i++){s=s.trim();if(!s.startsWith('[')&&!s.startsWith('{'))break;try{const p=JSON.parse(s);if(Array.isArray(p))return p;if(typeof p==='string'){s=p;continue;}break;}catch{break;}}return[];};
     const pagosMesPnl=(DB.pagos||[]).filter(pg=>{const f=normFecha(pg.fecha);return f&&f.startsWith(filtMes);});
-    const ingresosCobrados=pagosMesPnl.reduce((s,pg)=>s+N(pg.monto),0);
-    const ingPedidos=pagosMesPnl.filter(pg=>['anticipo','cobro','cxc-cobro'].includes(pg.tipo)).reduce((s,pg)=>s+N(pg.monto),0);
-    const ingCaja=pagosMesPnl.filter(pg=>pg.tipo==='venta-caja').reduce((s,pg)=>s+N(pg.monto),0);
+    // Excluir cxp-pago de ingresos (son egresos)
+    const pagosIngreso=pagosMesPnl.filter(pg=>pg.tipo!=='cxp-pago'&&N(pg.monto)>0);
+    const ingresosCobrados=pagosIngreso.reduce((s,pg)=>s+N(pg.monto),0);
+    const ingPedidos=pagosIngreso.filter(pg=>['anticipo','cobro','cxc-cobro'].includes(pg.tipo)).reduce((s,pg)=>s+N(pg.monto),0);
+    const ingCaja=pagosIngreso.filter(pg=>pg.tipo==='venta-caja').reduce((s,pg)=>s+N(pg.monto),0);
+    // CxP pagados en este mes como egreso separado
+    const cxpPagadoMes=pagosMesPnl.filter(pg=>pg.tipo==='cxp-pago').reduce((s,pg)=>s+Math.abs(N(pg.monto)),0);
     const pendMes=PEDS_DB().filter(p=>{const f=normFecha(p.fecha);return f.startsWith(filtMes)&&p.estado!=='cancelado';}).reduce((s,p)=>s+N(p.restante),0);
     const pedsMes=PEDS_DB().filter(p=>{const f=normFecha(p.fecha);return f.startsWith(filtMes)&&(p.estado==='entregado'||p.estado==='listo');});
     const costoIngPedidos=pedsMes.reduce((s,p)=>{return s+[...pA(p.ingsUsados),...pA(p.extrasProduccion)].reduce((ss,u)=>{const i=ING().find(x=>x.id==u.iid);return ss+(i?.costo?N(i.costo)*N(u.cant):0);},0);},0);
@@ -1601,7 +1605,7 @@ function renderRep(tab){
     const cxpPagadasPnl=(DB.cxp||[]).filter(x=>{if(x.estado!=='pagada')return false;const f=normFecha((x.updated||'').slice(0,10));return f&&f.startsWith(filtMes);}).reduce((s,x)=>s+N(x.monto),0);
     const comprasMesPnl=DB.movimientos.filter(m=>m.tipo==='entrada'&&m.fecha&&normFecha(m.fecha).startsWith(filtMes)&&N(m.costo)>0);const totalComprasPnl=comprasMesPnl.reduce((s,m)=>s+N(m.costo),0);
     const valorInvPnl=ING().reduce((s,i)=>s+(N(i.costo)*N(i.cant)),0);
-    const utilidadBruta=ingresosCobrados-costoVentas;const totalEgresosPnl=tGpnl+cxpPagadasPnl;const utilidadNeta=utilidadBruta-totalEgresosPnl;
+    const utilidadBruta=ingresosCobrados-costoVentas;const totalEgresosPnl=tGpnl+cxpPagadasPnl+cxpPagadoMes;const utilidadNeta=utilidadBruta-totalEgresosPnl;
     const mbPnl=ingresosCobrados>0?Math.round(utilidadBruta/ingresosCobrados*100):0;const mnPnl=ingresosCobrados>0?Math.round(utilidadNeta/ingresosCobrados*100):0;
     cont.innerHTML=`<div class="card"><div class="card-hd">📊 Estado de Resultados — ${mesLbl}
       <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="imprimirPNL()">🖨 Imprimir</button></div>
@@ -1618,7 +1622,8 @@ function renderRep(tab){
       </div>
       <div class="pnl-row" style="padding:9px 0;border-top:1.5px solid var(--border2)"><span style="font-weight:700">Utilidad Bruta</span><span class="pnl-val ${utilidadBruta>=0?'pnl-positive':'pnl-negative'}">${money(utilidadBruta)} <span style="font-size:.65rem">(${mbPnl}%)</span></span></div>
       <div class="pnl-section" style="margin-top:4px"><div class="pnl-section-title">💸 Gastos</div>
-        ${cxpPagadasPnl>0?`<div class="pnl-row"><span class="pnl-label">CxP pagadas</span><span class="pnl-val pnl-negative">-${money(cxpPagadasPnl)}</span></div>`:''}
+        ${cxpPagadasPnl>0?`<div class="pnl-row"><span class="pnl-label">CxP pagadas (mes)</span><span class="pnl-val pnl-negative">-${money(cxpPagadasPnl)}</span></div>`:''}
+        ${cxpPagadoMes>0?`<div class="pnl-row"><span class="pnl-label">Pagos a proveedores (CxP)</span><span class="pnl-val pnl-negative">-${money(cxpPagadoMes)}</span></div>`:''}
         ${totalComprasPnl>0?`<div class="pnl-row"><span class="pnl-label" style="font-size:.78rem;color:var(--ink3)">Compras inventario (info)</span><span class="pnl-val" style="font-size:.82rem">${money(totalComprasPnl)}</span></div>`:''}
         ${Object.entries(gbcPnl).map(([cat,v])=>`<div class="pnl-row"><span class="pnl-label">${cat}</span><span class="pnl-val pnl-negative">-${money(v)}</span></div>`).join('')}
         ${!gastosMesPnl.length&&!cxpPagadasPnl?`<div style="font-size:.77rem;color:var(--ink3);font-style:italic;padding:3px 0">Sin gastos registrados</div>`:''}
@@ -1909,12 +1914,13 @@ function renderCXC(){const cont=document.getElementById('cxc-list');if(!cont)ret
 function renderCXResumen(mod,el){const data=DB[mod]||[];const total=data.reduce((s,x)=>s+N(x.monto),0);const saldoPend=data.filter(x=>x.estado!=='pagada').reduce((s,x)=>s+N(x.saldo),0);const vencidas=data.filter(x=>x.estado!=='pagada'&&x.vencimiento&&normFecha(x.vencimiento)<today()).length;el.innerHTML=`<div class="sg" style="margin-bottom:0"><div class="sc sc-b"><div class="sl">Total ${mod==='cxp'?'a Pagar':'a Cobrar'}</div><div class="sv">${money(total)}</div><div class="ss">registrado</div></div><div class="sc sc-${vencidas>0?'b':'c'}"><div class="sl">${vencidas>0?'⚠️ Vencidas':'Saldo Pend.'}</div><div class="sv">${vencidas>0?vencidas:money(saldoPend)}</div><div class="ss">${vencidas>0?'atención':mod==='cxp'?'por pagar':'por cobrar'}</div></div></div>`;}
 function cxRow(x,mod){const venc=x.vencimiento?normFecha(x.vencimiento):'';const isVenc=venc&&venc<today()&&x.estado!=='pagada';const estColor={pendiente:'b-pend',parcial:'b-proc',pagada:'b-list'};const estLabel={pendiente:'⏳ Pendiente',parcial:'🔄 Parcial',pagada:'✅ Pagada'};return`<div class="li" onclick="openCXForm('${x.id}','${mod}')" style="cursor:pointer"><div class="la ${isVenc?'bg-d':'bg-a'}">${mod==='cxp'?'💳':'💰'}</div><div class="lb"><div class="lt">${x.tercero||'—'}${isVenc?' <span style="color:var(--danger);font-size:.7rem">VENCIDA</span>':''}</div><div class="ls">${x.concepto||'—'} · ${fDate(venc)||'Sin vencimiento'}</div></div><div class="lm"><div class="lamt">${money(N(x.saldo)||N(x.monto))}</div><div class="badge ${estColor[x.estado]||'b-pend'}">${estLabel[x.estado]||x.estado}</div></div></div>`;}
 function openCXP(id){openCXForm(id||null,'cxp');}function openCXC(id){openCXForm(id||null,'cxc');}
-function openCXForm(id,mod){const x=id?(DB[mod]||[]).find(i=>String(i.id)===String(id)):null;const btn=document.getElementById('cobro-confirm-btn');if(btn)btn.style.display='none';document.getElementById('cobro-content').innerHTML=`<div style="font-size:.9rem;font-weight:700;color:var(--amber);margin-bottom:12px">${mod==='cxp'?'💳 Cuenta por Pagar':'💰 Cuenta por Cobrar'}</div><div class="fg"><label class="fl">${mod==='cxp'?'Proveedor / Acreedor':'Cliente / Deudor'} *</label><input class="fc" id="cx-tercero" value="${x?.tercero||''}" placeholder="Nombre"></div><div class="fg"><label class="fl">Concepto *</label><input class="fc" id="cx-concepto" value="${x?.concepto||''}" placeholder="Descripción"></div><div class="fr2"><div class="fg"><label class="fl">Monto total ($) *</label><input class="fc" id="cx-monto" type="number" value="${x?.monto||''}" oninput="calcCXSaldo()"></div><div class="fg"><label class="fl">${mod==='cxp'?'Ya pagado':'Ya cobrado'} ($)</label><input class="fc" id="cx-abonado" type="number" value="${x?.abonado||0}" oninput="calcCXSaldo()"></div></div><div id="cx-saldo-disp" style="font-size:.84rem;color:var(--amber);font-weight:700;margin-bottom:10px;padding:7px 0;border-top:1px solid var(--border)"></div><div class="fr2"><div class="fg"><label class="fl">Fecha emisión</label><input class="fc" id="cx-fecha" type="date" value="${x?.fecha||today()}"></div><div class="fg"><label class="fl">Fecha vencimiento</label><input class="fc" id="cx-venc" type="date" value="${x?.vencimiento||''}"></div></div><div class="fg"><label class="fl">Notas</label><textarea class="fc" id="cx-notas" rows="2">${x?.notas||''}</textarea></div><input type="hidden" id="cx-edit-id" value="${id||''}"><input type="hidden" id="cx-mod" value="${mod}"><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-amber" onclick="saveCX()">💾 Guardar</button>${x&&x.estado!=='pagada'?`<button class="btn btn-sage btn-sm" onclick="abonarCX('${x.id}','${mod}')">💵 Abonar</button>`:''} ${x?`<button class="btn btn-rust btn-sm" onclick="if(confirm('¿Eliminar?')){DB['${mod}']=DB['${mod}'].filter(i=>String(i.id)!=='${x.id}');syncRow('${mod}','delete',null,'${x.id}');const b=document.getElementById('cobro-confirm-btn');if(b){b.style.display='';b.onclick=confirmCobro;}cm('mo-cobro');renderV(CUR);toast('🗑 Eliminada')}">🗑</button>`:''}  </div>`;calcCXSaldo();om('mo-cobro');}
+function openCXForm(id,mod){const x=id?(DB[mod]||[]).find(i=>String(i.id)===String(id)):null;const btn=document.getElementById('cobro-confirm-btn');if(btn)btn.style.display='none';document.getElementById('cobro-content').innerHTML=`<div style="font-size:.9rem;font-weight:700;color:var(--amber);margin-bottom:12px">${mod==='cxp'?'💳 Cuenta por Pagar':'💰 Cuenta por Cobrar'}</div><div class="fg"><label class="fl">${mod==='cxp'?'Proveedor / Acreedor':'Cliente / Deudor'} *</label><input class="fc" id="cx-tercero" value="${x?.tercero||''}" placeholder="Nombre"></div><div class="fg"><label class="fl">Concepto *</label><input class="fc" id="cx-concepto" value="${x?.concepto||''}" placeholder="Descripción"></div><div class="fr2"><div class="fg"><label class="fl">Monto total ($) *</label><input class="fc" id="cx-monto" type="number" value="${x?.monto||''}" oninput="calcCXSaldo()"></div><div class="fg"><label class="fl">${mod==='cxp'?'Ya pagado':'Ya cobrado'} ($)</label><input class="fc" id="cx-abonado" type="number" value="${x?.abonado||0}" oninput="calcCXSaldo()"></div></div><div id="cx-saldo-disp" style="font-size:.84rem;color:var(--amber);font-weight:700;margin-bottom:10px;padding:7px 0;border-top:1px solid var(--border)"></div><div class="fr2"><div class="fg"><label class="fl">Fecha emisión</label><input class="fc" id="cx-fecha" type="date" value="${x?.fecha||today()}"></div><div class="fg"><label class="fl">Fecha vencimiento</label><input class="fc" id="cx-venc" type="date" value="${x?.vencimiento||''}"></div></div><div class="fg"><label class="fl">Notas</label><textarea class="fc" id="cx-notas" rows="2">${x?.notas||''}</textarea></div><input type="hidden" id="cx-edit-id" value="${id||''}"><input type="hidden" id="cx-mod" value="${mod}"><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-amber" onclick="saveCX()">💾 Guardar</button>${x&&x.estado!=='pagada'?`<button class="btn btn-sage btn-sm" onclick="abonarCX('${x.id}','${mod}')">${mod==='cxp'?'💵 Registrar Pago':'💵 Registrar Cobro'}</button>`:''} ${x?`<button class="btn btn-rust btn-sm" onclick="if(confirm('¿Eliminar?')){DB['${mod}']=DB['${mod}'].filter(i=>String(i.id)!=='${x.id}');syncRow('${mod}','delete',null,'${x.id}');const b=document.getElementById('cobro-confirm-btn');if(b){b.style.display='';b.onclick=confirmCobro;}cm('mo-cobro');renderV(CUR);toast('🗑 Eliminada')}">🗑</button>`:''}  </div>`;calcCXSaldo();om('mo-cobro');}
 function calcCXSaldo(){const m=N(document.getElementById('cx-monto')?.value),a=N(document.getElementById('cx-abonado')?.value);const el=document.getElementById('cx-saldo-disp');if(el)el.textContent=`Saldo pendiente: ${money(Math.max(0,m-a))}`;}
-function saveCX(){const tercero=document.getElementById('cx-tercero')?.value.trim(),concepto=document.getElementById('cx-concepto')?.value.trim(),monto=N(document.getElementById('cx-monto')?.value);if(!tercero||!concepto||!monto){toast('❌ Completa los campos requeridos');return;}const mod=document.getElementById('cx-mod')?.value||'cxp';const abonado=N(document.getElementById('cx-abonado')?.value)||0;const saldo=Math.max(0,monto-abonado);const estado=saldo<=0?'pagada':abonado>0?'parcial':'pendiente';const eid=document.getElementById('cx-edit-id')?.value;const data={tercero,concepto,monto,abonado,saldo,estado,fecha:document.getElementById('cx-fecha')?.value||today(),vencimiento:document.getElementById('cx-venc')?.value||'',notas:document.getElementById('cx-notas')?.value||'',updated:new Date().toISOString()};if(eid){const x=(DB[mod]||[]).find(i=>String(i.id)===eid);if(x){Object.assign(x,data);syncRow(mod,'update',x,x.id);}}else{const x={id:uid(),...data,created:new Date().toISOString()};if(!DB[mod])DB[mod]=[];DB[mod].push(x);syncRow(mod,'write',x,x.id);}const b=document.getElementById('cobro-confirm-btn');if(b){b.style.display='';b.onclick=confirmCobro;}cm('mo-cobro');toast('✅ Cuenta guardada');renderV(CUR);}
+function saveCX(){const tercero=document.getElementById('cx-tercero')?.value.trim(),concepto=document.getElementById('cx-concepto')?.value.trim(),monto=N(document.getElementById('cx-monto')?.value);if(!tercero||!concepto||!monto){toast('❌ Completa los campos requeridos');return;}const mod=document.getElementById('cx-mod')?.value||'cxp';const abonado=N(document.getElementById('cx-abonado')?.value)||0;const saldo=Math.max(0,monto-abonado);const estado=saldo<=0?'pagada':abonado>0?'parcial':'pendiente';const eid=document.getElementById('cx-edit-id')?.value;const vencVal=document.getElementById('cx-venc')?.value;const data={tercero,concepto,monto,abonado,saldo,estado,fecha:document.getElementById('cx-fecha')?.value||today(),vencimiento:vencVal||null,notas:document.getElementById('cx-notas')?.value||'',updated:new Date().toISOString()};if(eid){const x=(DB[mod]||[]).find(i=>String(i.id)===eid);if(x){Object.assign(x,data);syncRow(mod,'update',x,x.id);}}else{const x={id:uid(),...data,created:new Date().toISOString()};if(!DB[mod])DB[mod]=[];DB[mod].push(x);syncRow(mod,'write',x,x.id);}const b=document.getElementById('cobro-confirm-btn');if(b){b.style.display='';b.onclick=confirmCobro;}cm('mo-cobro');toast('✅ Cuenta guardada');renderV(CUR);}
 function abonarCX(id,mod){
   const x=(DB[mod]||[]).find(i=>String(i.id)===String(id));if(!x)return;
-  const montoProm=prompt(`Monto a abonar (saldo pendiente: ${money(x.saldo)}):`);
+  const label=mod==='cxp'?'pagar':'abonar';
+  const montoProm=prompt(`Monto a ${label} (saldo pendiente: ${money(x.saldo)}):`);
   if(!montoProm||isNaN(N(montoProm))||N(montoProm)<=0)return;
   const monto=N(montoProm);
   if(monto>N(x.saldo)){
@@ -1927,19 +1933,35 @@ function abonarCX(id,mod){
   x.estado=x.saldo<=0?'pagada':x.abonado>0?'parcial':'pendiente';
   x.updated=new Date().toISOString();
   syncRow(mod,'update',x,x.id);
-  const pg={id:uid(),pedidoId:x.pedidoId||id,cliente:x.tercero,monto,tipo:mod+'-cobro',fecha:today(),metodo:'CxC',created:new Date().toISOString()};
-  DB.pagos.push(pg);syncRow('pagos','write',pg,pg.id);
-  if(x.pedidoId){
-    const p=PEDS_DB().find(px=>String(px.id)===String(x.pedidoId));
-    if(p){
-      const saldoPed=Math.max(0,N(p.restante)-monto);
-      p.restante=saldoPed;if(p.restante===0)p.pagado=true;
-      p.updated=new Date().toISOString();
-      syncRow('pedidos','update',p,p.id);
-      if(can('imprimir')&&confirm('¿Imprimir recibo de cobro?'))generarReciboCobro(p.id,monto,'CxC',saldoPed);
+
+  if(mod==='cxp'){
+    // CxP: registrar como EGRESO en pagos (monto negativo) para no afectar ingresos
+    const pg={id:uid(),pedidoId:null,cliente:x.tercero,monto:-Math.abs(monto),tipo:'cxp-pago',fecha:today(),metodo:'CxP',created:new Date().toISOString()};
+    DB.pagos.push(pg);syncRow('pagos','write',pg,pg.id);
+    // Ofrecer registrar como gasto
+    if(confirm(`¿Registrar este pago de ${money(monto)} como gasto en el Estado de Resultados?`)){
+      const g={id:uid(),concepto:x.concepto||`Pago a ${x.tercero}`,monto,cat:'CxP',fecha:today(),notas:`Pago CxP — ${x.tercero}`,created:new Date().toISOString()};
+      DB.gastos.push(g);syncRow('gastos','write',g,g.id);
+      toast(`✅ Pago registrado y guardado como gasto`);
+    }else{
+      toast(`✅ Pago registrado — saldo: ${money(x.saldo)}`);
     }
+  }else{
+    // CxC: registrar como ingreso normal
+    const pg={id:uid(),pedidoId:x.pedidoId||id,cliente:x.tercero,monto,tipo:'cxc-cobro',fecha:today(),metodo:'CxC',created:new Date().toISOString()};
+    DB.pagos.push(pg);syncRow('pagos','write',pg,pg.id);
+    if(x.pedidoId){
+      const p=PEDS_DB().find(px=>String(px.id)===String(x.pedidoId));
+      if(p){
+        const saldoPed=Math.max(0,N(p.restante)-monto);
+        p.restante=saldoPed;if(p.restante===0)p.pagado=true;
+        p.updated=new Date().toISOString();
+        syncRow('pedidos','update',p,p.id);
+        if(can('imprimir')&&confirm('¿Imprimir recibo de cobro?'))generarReciboCobro(p.id,monto,'CxC',saldoPed);
+      }
+    }
+    toast(`✅ Abono registrado — saldo: ${money(x.saldo)}`);
   }
-  toast(`✅ Abono registrado — saldo: ${money(x.saldo)}`);
   renderV(CUR);
 }
 
