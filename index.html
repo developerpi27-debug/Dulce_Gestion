@@ -1602,10 +1602,12 @@ function renderRep(tab){
     const costoVentasCaja=ventasMesPnl.reduce((s,v)=>{return s+pA(v.items).reduce((ss,item)=>{if(item.tipo==='inventario'&&item.ingId){const ing=ING().find(i=>i.id==item.ingId);return ss+(ing?.costo?N(ing.costo)*N(item.cant):0);}if(item.tipo==='producto'){const pr=PRODS_DB().find(p=>p.id==item.id.replace('p_',''));if(!pr)return ss;return ss+pA(pr.ings).reduce((sss,u)=>{const i=ING().find(x=>x.id==u.iid);return sss+(i?.costo?N(i.costo)*N(u.cant)*N(item.cant):0);},0);}return ss;},0);},0);
     const costoVentas=costoIngPedidos+costoVentasCaja;
     const gastosMesPnl=DB.gastos.filter(g=>g.fecha&&normFecha(g.fecha).startsWith(filtMes));const tGpnl=gastosMesPnl.reduce((s,g)=>s+N(g.monto),0);const gbcPnl={};gastosMesPnl.forEach(g=>{gbcPnl[g.cat]=(gbcPnl[g.cat]||0)+N(g.monto);});
-    const cxpPagadasPnl=(DB.cxp||[]).filter(x=>{if(x.estado!=='pagada')return false;const f=normFecha((x.updated||'').slice(0,10));return f&&f.startsWith(filtMes);}).reduce((s,x)=>s+N(x.monto),0);
+    // CxP: solo los que se registraron como gasto ya están en gastosMesPnl con cat='CxP'
+    // NO incluir cxpPagadasPnl ni cxpPagadoMes en egresos (ya están como gastos si el usuario lo eligió)
+    const cxpPendienteTotal=(DB.cxp||[]).filter(x=>x.estado!=='pagada').reduce((s,x)=>s+N(x.saldo),0);
     const comprasMesPnl=DB.movimientos.filter(m=>m.tipo==='entrada'&&m.fecha&&normFecha(m.fecha).startsWith(filtMes)&&N(m.costo)>0);const totalComprasPnl=comprasMesPnl.reduce((s,m)=>s+N(m.costo),0);
     const valorInvPnl=ING().reduce((s,i)=>s+(N(i.costo)*N(i.cant)),0);
-    const utilidadBruta=ingresosCobrados-costoVentas;const totalEgresosPnl=tGpnl+cxpPagadasPnl+cxpPagadoMes;const utilidadNeta=utilidadBruta-totalEgresosPnl;
+    const utilidadBruta=ingresosCobrados-costoVentas;const totalEgresosPnl=tGpnl;const utilidadNeta=utilidadBruta-totalEgresosPnl;
     const mbPnl=ingresosCobrados>0?Math.round(utilidadBruta/ingresosCobrados*100):0;const mnPnl=ingresosCobrados>0?Math.round(utilidadNeta/ingresosCobrados*100):0;
     cont.innerHTML=`<div class="card"><div class="card-hd">📊 Estado de Resultados — ${mesLbl}
       <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="imprimirPNL()">🖨 Imprimir</button></div>
@@ -1622,15 +1624,14 @@ function renderRep(tab){
       </div>
       <div class="pnl-row" style="padding:9px 0;border-top:1.5px solid var(--border2)"><span style="font-weight:700">Utilidad Bruta</span><span class="pnl-val ${utilidadBruta>=0?'pnl-positive':'pnl-negative'}">${money(utilidadBruta)} <span style="font-size:.65rem">(${mbPnl}%)</span></span></div>
       <div class="pnl-section" style="margin-top:4px"><div class="pnl-section-title">💸 Gastos</div>
-        ${cxpPagadasPnl>0?`<div class="pnl-row"><span class="pnl-label">CxP pagadas (mes)</span><span class="pnl-val pnl-negative">-${money(cxpPagadasPnl)}</span></div>`:''}
-        ${cxpPagadoMes>0?`<div class="pnl-row"><span class="pnl-label">Pagos a proveedores (CxP)</span><span class="pnl-val pnl-negative">-${money(cxpPagadoMes)}</span></div>`:''}
-        ${totalComprasPnl>0?`<div class="pnl-row"><span class="pnl-label" style="font-size:.78rem;color:var(--ink3)">Compras inventario (info)</span><span class="pnl-val" style="font-size:.82rem">${money(totalComprasPnl)}</span></div>`:''}
+        ${totalComprasPnl>0?`<div class="pnl-row"><span class="pnl-label" style="font-size:.78rem;color:var(--ink3)">📦 Compras inventario (info)</span><span class="pnl-val" style="font-size:.82rem;color:var(--ink3)">${money(totalComprasPnl)}</span></div>`:''}
         ${Object.entries(gbcPnl).map(([cat,v])=>`<div class="pnl-row"><span class="pnl-label">${cat}</span><span class="pnl-val pnl-negative">-${money(v)}</span></div>`).join('')}
-        ${!gastosMesPnl.length&&!cxpPagadasPnl?`<div style="font-size:.77rem;color:var(--ink3);font-style:italic;padding:3px 0">Sin gastos registrados</div>`:''}
+        ${!gastosMesPnl.length?`<div style="font-size:.77rem;color:var(--ink3);font-style:italic;padding:3px 0">Sin gastos registrados</div>`:''}
         <div class="pnl-row" style="border-top:1px solid var(--border);margin-top:3px;padding-top:7px"><span style="font-weight:600">Total Egresos</span><span class="pnl-val pnl-negative">-${money(totalEgresosPnl)}</span></div>
       </div>
       <div class="pnl-total"><span class="pnl-total-label">UTILIDAD NETA</span><span class="pnl-total-val ${utilidadNeta>=0?'pnl-positive':'pnl-negative'}">${money(utilidadNeta)}</span></div>
       <div style="text-align:right;font-size:.72rem;color:${mnPnl>=0?'var(--ok)':'var(--danger)'};font-weight:700;margin-top:1px">Margen neto: ${mnPnl}%</div>
+      ${cxpPendienteTotal>0?`<div style="margin-top:12px;background:rgba(192,48,42,.06);border:1px solid rgba(192,48,42,.18);border-radius:10px;padding:10px 13px"><div style="font-size:.72rem;font-weight:700;color:var(--danger);margin-bottom:4px">⚠️ CUENTAS POR PAGAR PENDIENTES</div><div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:.82rem;color:var(--ink2)">Total pendiente a proveedores</span><span style="font-size:1.1rem;font-weight:700;color:var(--danger)">${money(cxpPendienteTotal)}</span></div><div style="font-size:.68rem;color:var(--ink3);margin-top:3px">Solo se reflejan como gasto cuando se registra el pago en CxP</div></div>`:''}
     </div>
     <div class="card"><div class="card-hd">📦 Valor del Inventario</div>
       <div style="font-family:Georgia,serif;font-size:1.6rem;font-weight:700;color:var(--amber);text-align:center;padding:10px 0">${money(valorInvPnl)}</div>
