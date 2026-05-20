@@ -707,86 +707,92 @@ let inactivityTimer=null;
 let lastActivity=Date.now();
 
 /* ═══════════════════════════════════════
-   AUTO-REFRESH — siempre re-renderiza tras cargar
+   AUTO-REFRESH
 ═══════════════════════════════════════ */
 function dataHash(){
-  // No usar timestamps (updated) — varían por timezone entre dispositivos
-  const ph=DB.pedidos.map(p=>p.id+'_'+p.estado+'_'+p.restante).sort().join('|');
-  const ih=DB.inventario.map(i=>i.id+'_'+String(i.cant)).sort().join('|');
-  const sh=(DB.solicitudes||[]).map(s=>s.id+'_'+s.estado).sort().join('|');
-  const pgh=(DB.pagos||[]).length+'_'+(DB.pagos||[]).map(p=>p.id).sort().join(',');
-  const gh=(DB.gastos||[]).map(g=>g.id).sort().join(',');
-  const vh=(DB.ventas||[]).map(v=>v.id).sort().join(',');
-  const cxch=(DB.cxc||[]).map(x=>x.id+'_'+x.estado+'_'+x.saldo).sort().join('|');
-  const cfgh=JSON.stringify(CFG);
-  return [ph,ih,sh,pgh,gh,vh,cxch,cfgh].join('::');
+  // Solo datos de negocio — NO incluir CFG (se recarga en cada ciclo y causa falsos positivos)
+  const ph=(DB.pedidos||[]).map(p=>p.id+'|'+p.estado+'|'+p.restante).sort().join(';');
+  const ih=(DB.inventario||[]).map(i=>i.id+'|'+Number(i.cant||0).toFixed(3)).sort().join(';');
+  const sh=(DB.solicitudes||[]).map(s=>s.id+'|'+s.estado).sort().join(';');
+  const pgl=(DB.pagos||[]).length;
+  const pgs=(DB.pagos||[]).reduce((a,p)=>a+Number(p.monto||0),0).toFixed(2);
+  const gl=(DB.gastos||[]).length;
+  const vl=(DB.ventas||[]).length;
+  const cx=(DB.cxc||[]).map(x=>x.id+'|'+x.estado+'|'+Number(x.saldo||0).toFixed(2)).sort().join(';');
+  return[ph,ih,sh,pgl+'_'+pgs,gl,vl,cx].join('||');
 }
 
 function startAutoRefresh(){
-  if(autoRefreshInterval)clearInterval(autoRefreshInterval);
-  const interval=Math.max(15,(parseInt(CFG.refreshInterval)||20))*1000;
+  if(autoRefreshInterval){clearInterval(autoRefreshInterval);autoRefreshInterval=null;}
+  const secs=Math.max(15,parseInt(CFG.refreshInterval)||20);
+  console.log('[AutoRefresh] Iniciando — intervalo:',secs,'s');
   autoRefreshInterval=setInterval(async()=>{
-    if(!SESSION)return;
-    if(isRefreshing||isSavingConfig)return;
+    if(!SESSION){console.log('[AutoRefresh] Sin sesión, skip');return;}
+    if(isRefreshing){console.log('[AutoRefresh] Ya refrescando, skip');return;}
+    if(isSavingConfig){console.log('[AutoRefresh] Guardando config, skip');return;}
     isRefreshing=true;
     try{
       const ok=await loadAllData();
-      if(!ok){isRefreshing=false;return;}
+      if(!ok){console.warn('[AutoRefresh] loadAllData falló');return;}
       const nh=dataHash();
       if(nh!==lastDataHash){
+        console.log('[AutoRefresh] ✅ Cambios detectados — re-renderizando');
         lastDataHash=nh;
         const sc=document.getElementById('scroll');
         const pos=sc?sc.scrollTop:0;
         renderV(CUR);
         updateBadge();
         requestAnimationFrame(()=>{if(sc&&pos>0)sc.scrollTop=pos;});
+      }else{
+        console.log('[AutoRefresh] Sin cambios');
       }
     }catch(e){
-      console.warn('autoRefresh error:',e.message);
+      console.warn('[AutoRefresh] Error:',e.message);
     }finally{
-      isRefreshing=false; // SIEMPRE se resetea, incluso si hay error
+      isRefreshing=false;
     }
-  },interval);
+  },secs*1000);
 }
 
 /* ═══════════════════════════════════════
-   INACTIVIDAD — cierre automático de sesión
+   INACTIVIDAD
 ═══════════════════════════════════════ */
-// Referencia fija a la función — necesaria para poder remover el listener correctamente
 function _resetActivity(){lastActivity=Date.now();}
 const ACTIVITY_EVENTS=['click','touchstart','keydown','mousemove','scroll','touchmove'];
 
 function startInactivityTimer(){
   stopInactivityTimer();
   const mins=parseInt(CFG.inactivityTimeout)||0;
-  if(!mins||mins<=0)return;
+  if(!mins||mins<=0){console.log('[Inactividad] Desactivado (0 minutos)');return;}
   const ms=mins*60*1000;
-  lastActivity=Date.now(); // Resetear al iniciar
-  // Registrar con función nombrada (se puede remover después)
+  lastActivity=Date.now();
+  console.log('[Inactividad] Iniciando — timeout:',mins,'min');
   ACTIVITY_EVENTS.forEach(ev=>document.addEventListener(ev,_resetActivity,{passive:true}));
   inactivityTimer=setInterval(()=>{
     if(!SESSION)return;
-    if((Date.now()-lastActivity)>=ms){
+    const elapsed=Math.round((Date.now()-lastActivity)/1000);
+    const limit=Math.round(ms/1000);
+    console.log('[Inactividad] Inactivo',elapsed+'s / límite',limit+'s');
+    if(elapsed>=limit){
+      console.log('[Inactividad] ⏱ Cerrando sesión por inactividad');
       stopInactivityTimer();
       toast('🔒 Sesión cerrada por inactividad');
       setTimeout(()=>logout(),800);
     }
-  },15000); // Chequear cada 15s para mayor precisión en móvil
+  },15000);
 }
+
 function stopInactivityTimer(){
   if(inactivityTimer){clearInterval(inactivityTimer);inactivityTimer=null;}
-  // Siempre remover listeners aunque no haya timer activo
   ACTIVITY_EVENTS.forEach(ev=>document.removeEventListener(ev,_resetActivity));
+  console.log('[Inactividad] Timer detenido');
 }
 
 function silentRefresh(){
+  const sc=document.getElementById('scroll');
+  const pos=sc?sc.scrollTop:0;
   renderV(CUR);updateBadge();
-  const n=(DB.alertas||[]).filter(a=>!a.leida).length
-    +(DB.solicitudes||[]).filter(s=>s.estado==='nueva').length
-    +(DB.cxp||[]).filter(x=>x.estado!=='pagada'&&x.vencimiento&&normFecha(x.vencimiento)<today()).length
-    +(DB.cxc||[]).filter(x=>x.estado!=='pagada'&&x.vencimiento&&normFecha(x.vencimiento)<today()).length;
-  const nb=document.getElementById('nbadge');
-  if(nb){nb.textContent=n||'';nb.style.display=n?'':'none';}
+  requestAnimationFrame(()=>{if(sc&&pos>0)sc.scrollTop=pos;});
 }
 
 /* ═══════════════════════════════════════
