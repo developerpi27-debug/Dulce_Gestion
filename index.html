@@ -788,10 +788,20 @@ function stopInactivityTimer(){
   console.log('[Inactividad] Timer detenido');
 }
 
+function updateBadge(){
+  const n=(DB.alertas||[]).filter(a=>!a.leida).length
+    +(DB.solicitudes||[]).filter(s=>s.estado==='nueva').length
+    +(DB.cxp||[]).filter(x=>x.estado!=='pagada'&&x.vencimiento&&normFecha(x.vencimiento)<today()).length
+    +(DB.cxc||[]).filter(x=>x.estado!=='pagada'&&x.vencimiento&&normFecha(x.vencimiento)<today()).length;
+  const nb=document.getElementById('nbadge');
+  if(nb){nb.textContent=n||'';nb.style.display=n?'':'none';}
+}
+
 function silentRefresh(){
   const sc=document.getElementById('scroll');
   const pos=sc?sc.scrollTop:0;
-  renderV(CUR);updateBadge();
+  renderV(CUR);
+  updateBadge();
   requestAnimationFrame(()=>{if(sc&&pos>0)sc.scrollTop=pos;});
 }
 
