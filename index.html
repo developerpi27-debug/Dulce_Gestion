@@ -927,10 +927,11 @@ async function loadAllData(){
 /* syncRow — única función que llama el resto de la app para persistir datos */
 async function syncRow(table,action,data,id){
   try{
-    // Preparar datos: serializar arrays/objetos para Supabase (jsonb los acepta nativos)
     const payload=data?{...data}:null;
     if(payload){
-      // Convertir camelCase a snake_case para columnas especiales
+      // Eliminar valores undefined/null explícito para evitar 400
+      Object.keys(payload).forEach(k=>{if(payload[k]===undefined)delete payload[k];});
+      // camelCase → snake_case para columnas especiales
       if('precioVenta' in payload){payload.precio_venta=payload.precioVenta;delete payload.precioVenta;}
       if('pedidoId' in payload){payload.pedido_id=payload.pedidoId;delete payload.pedidoId;}
       if('fechaDeseada' in payload){payload.fecha_deseada=payload.fechaDeseada;delete payload.fechaDeseada;}
@@ -944,9 +945,11 @@ async function syncRow(table,action,data,id){
       if('costoExtraEntrega' in payload){payload.costo_extra_entrega=payload.costoExtraEntrega;delete payload.costoExtraEntrega;}
       if('facNum' in payload){payload.fac_num=payload.facNum;delete payload.facNum;}
       if('lastLogin' in payload){payload.last_login=payload.lastLogin;delete payload.lastLogin;}
-      // Fechas: asegurar formato YYYY-MM-DD
-      if(payload.fecha&&typeof payload.fecha==='string'&&payload.fecha.length>10)payload.fecha=payload.fecha.slice(0,10);
-      if(payload.fecha_deseada&&typeof payload.fecha_deseada==='string'&&payload.fecha_deseada.length>10)payload.fecha_deseada=payload.fecha_deseada.slice(0,10);
+      // Fechas cortas
+      if(payload.fecha&&typeof payload.fecha==='string'&&payload.fecha.length>10&&!payload.fecha.includes('T'))
+        payload.fecha=payload.fecha.slice(0,10);
+      if(payload.fecha_deseada&&typeof payload.fecha_deseada==='string'&&payload.fecha_deseada.length>10)
+        payload.fecha_deseada=payload.fecha_deseada.slice(0,10);
     }
     if(action==='write')  await sbUpsert(table,payload);
     if(action==='update') await sbUpdate(table,id,payload);
@@ -1395,8 +1398,10 @@ function editarEntrada(id){
   // Ajustar stock del ingrediente
   const ing=ING().find(i=>i.nombre&&m.nombre&&i.nombre.toLowerCase()===m.nombre.toLowerCase());
   if(ing){ing.cant=Math.max(0,N(ing.cant)+diff);ing.updated=new Date().toISOString();syncRow('inventario','update',ing,ing.id);}
-  m.cant=nuevaCant;m.costo=nuevoCosto;m.notas=(m.notas||'')+(diff!==0?' [editado]':'');m.updated=new Date().toISOString();
-  syncRow('movimientos','update',m,m.id);
+  m.cant=nuevaCant;m.costo=nuevoCosto;m.notas=(m.notas||'')+(diff!==0?' [editado]':'');
+  // Enviar solo campos válidos de la tabla movimientos (no incluir 'updated' que no es columna)
+  const payload={id:m.id,tipo:m.tipo,nombre:m.nombre,cant:m.cant,costo:m.costo,notas:m.notas,fecha:m.fecha,ref:m.ref||''};
+  syncRow('movimientos','update',payload,m.id);
   toast(`✅ Entrada actualizada${ing?` — stock ajustado (${diff>=0?'+':''}${R(diff)} ${ing.unidad||''})`:''}`);
   renderMovs();
 }
