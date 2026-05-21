@@ -634,7 +634,7 @@ select.fc{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
   </div>
   <div id="factura-preview" style="background:#fff;border:1px solid #ddd;border-radius:10px;padding:18px;font-family:Georgia,serif;font-size:13px;line-height:1.5;color:#111;"></div>
 </div></div>
-<style>@media print{body>*:not(#pf){display:none!important}#pf{display:block!important;position:fixed;inset:0;background:#fff;z-index:99999;padding:0}#pf table{page-break-inside:auto}#pf tr{page-break-inside:avoid;page-break-after:auto}#pf div[style*="margin-bottom"]{page-break-inside:avoid}@page{margin:12mm 15mm;size:A4 portrait}}#pf{display:none}</style>
+<style>@media print{body>*:not(#pf){display:none!important}#pf{display:block!important;position:static!important;background:#fff;z-index:99999;padding:0;overflow:visible!important;height:auto!important}#pf table{page-break-inside:auto}#pf tr{page-break-inside:avoid;page-break-after:auto}@page{margin:12mm 15mm;size:A4 portrait}}#pf{display:none;position:fixed;inset:0;background:#fff;z-index:99999;overflow:auto}</style>
 <div class="mo" id="mo-sol-ver"><div class="mbox"><div class="mh"><h3>📨 Detalle de Solicitud</h3><button class="mclose" onclick="cm('mo-sol-ver')">✕</button></div><input type="hidden" id="sol-modal-solId"><div id="sol-modal-content"></div></div></div>
 <div id="pf"></div>
 
@@ -1387,7 +1387,7 @@ function savePed(){const cli=document.getElementById('f-cli').value.trim(),descr
   }else{
     const p={id:uid(),cliente:cli,telefono:document.getElementById('f-tel').value,descr,qty,total,anticipo:ant,restante:total-ant,fecha,hora:document.getElementById('f-hora').value,estado:document.getElementById('f-estado').value,notas:document.getElementById('f-notas').value,recId,ingsCalc,extrasCreate:extras,extrasProduccion:[],extrasEntrega:[],ingsUsados:[],created:new Date().toISOString(),updated:new Date().toISOString()};
     DB.pedidos.push(p);syncRow('pedidos','write',p,p.id);
-    if(extras.length>0){const er={id:'ext_'+p.id,pedido_id:p.id,extras,created:new Date().toISOString()};DB.extras_pedidos.push(er);syncRow('extras_pedidos','write',er,er.id);}
+    if(extras.length>0){const er={id:'ext_'+p.id,pedido_id:p.id,extras,created:new Date().toISOString()};const existingEr=DB.extras_pedidos.find(e=>e.id==='ext_'+p.id||String(e.pedido_id)===String(p.id));if(existingEr){Object.assign(existingEr,er);syncRow('extras_pedidos','upsert',er,er.id);}else{DB.extras_pedidos.push(er);syncRow('extras_pedidos','upsert',er,er.id);}}
     if(ant>0){const antMetodo=document.getElementById('f-ant-metodo')?.value||'Efectivo';const pg={id:uid(),pedidoId:p.id,cliente:p.cliente,monto:ant,tipo:'anticipo',fecha:today(),metodo:antMetodo,created:new Date().toISOString()};DB.pagos.push(pg);syncRow('pagos','write',pg,pg.id);}
   }cm('mo-ped');toast('✅ Pedido guardado');resetPedForm();renderV(CUR);}
 function openEditPed(id){const p=PEDS_DB().find(x=>x.id==id);if(!p)return;resetPedForm();cm('mo-ver');document.getElementById('ped-titulo').textContent='Editar Pedido';document.getElementById('f-edit-id').value=id;document.getElementById('f-cli').value=p.cliente;document.getElementById('f-tel').value=p.telefono||'';document.getElementById('f-desc').value=p.descr;document.getElementById('f-qty').value=p.qty;document.getElementById('f-total').value=p.total;document.getElementById('f-anticipo').value=p.anticipo;document.getElementById('f-rest').value=money(p.restante);document.getElementById('f-fecha').value=p.fecha;document.getElementById('f-hora').value=p.hora;document.getElementById('f-notas').value=p.notas||'';document.getElementById('f-estado').value=p.estado;if(p.recId){document.getElementById('f-rec').value=p.recId;onRecSel();}om('mo-ped');}
@@ -1539,7 +1539,8 @@ function imprimirPNL(){
     ${cont.innerHTML}
     <div style="text-align:center;font-size:.75rem;color:#888;margin-top:20px;border-top:1px solid #ccc;padding-top:8px">Impreso el ${new Date().toLocaleDateString('es')} a las ${new Date().toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit'})}</div>
   </div>`;
-  pf.style.display='block';window.print();setTimeout(()=>{pf.style.display='none';},1000);
+  pf.style.display='block';
+  setTimeout(()=>{window.print();setTimeout(()=>{pf.style.display='none';},500);},200);
 }
 
 /* ═══════════════════════════════════════
@@ -1564,7 +1565,10 @@ function imprimirVentasDia(fechaParam){
   const pedRows=pedidosHoy.map(p=>`<tr><td style="padding:4px 7px">${p.cliente}</td><td style="padding:4px 7px">${p.descr}</td><td style="padding:4px 7px;text-align:right">${money(p.total)}</td><td style="padding:4px 7px;text-align:right;color:${N(p.restante)===0?'green':'#c00'}">${N(p.restante)===0?'✅ Pagado':'Debe '+money(p.restante)}</td></tr>`).join('');
   const ventaRows=ventasHoy.map(v=>{const items=Array.isArray(v.items)?v.items:(typeof v.items==='string'?JSON.parse(v.items||'[]'):[]);return`<tr><td style="padding:4px 7px">Caja #${String(v.id).slice(-4)}</td><td style="padding:4px 7px">${items.map(i=>i.nombre+(i.cant>1?` ×${i.cant}`:'')).join(', ')}</td><td style="padding:4px 7px;text-align:right">${money(v.total)}</td><td style="padding:4px 7px;text-align:right;color:green">✅ ${v.metodo||'Efectivo'}</td></tr>`;}).join('');
   // Gastos manuales del día (excluyendo los de cat CxP que ya aparecen arriba)
-  const gastosManHoy=(DB.gastos||[]).filter(g=>normFecha(g.fecha)===h&&g.cat!=='CxP');
+  const gastosManHoy=(DB.gastos||[]).filter(g=>{
+    const fg=g.fecha?normFecha(String(g.fecha).slice(0,10)):null;
+    return fg===h&&g.cat!=='CxP';
+  });
   const totalGastosMan=gastosManHoy.reduce((s,g)=>s+N(g.monto),0);
   const cxpRows=pagosCxpHoy.map(p=>`<tr><td style="padding:4px 7px">${p.cliente||'—'}</td><td style="padding:4px 7px">${(DB.cxp||[]).find(x=>String(x.id)===String(p.pedidoId))?.concepto||'Pago a proveedor'}</td><td style="padding:4px 7px;text-align:right;color:#c0302a;font-weight:700">-${money(Math.abs(N(p.monto)))}</td><td style="padding:4px 7px;text-align:right">${p.metodo||'Efectivo'}</td></tr>`).join('');
   const gastosManRows=gastosManHoy.map(g=>`<tr><td style="padding:4px 7px">${g.concepto}</td><td style="padding:4px 7px">${g.cat||'—'}</td><td style="padding:4px 7px;text-align:right;color:#c0302a;font-weight:700">-${money(N(g.monto))}</td><td style="padding:4px 7px;text-align:right">${g.metodo||'Efectivo'}</td></tr>`).join('');
@@ -1643,7 +1647,7 @@ function imprimirVentasDia(fechaParam){
     ${!pedidosHoy.length&&!ventasHoy.length&&!pagosCxpHoy.length?'<div style="text-align:center;color:#888;padding:20px">Sin movimientos registrados hoy</div>':''}
     <div style="text-align:center;font-size:.75rem;color:#888;margin-top:20px;border-top:1px solid #ccc;padding-top:8px">Generado el ${new Date().toLocaleDateString('es')} a las ${new Date().toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit'})} — ${CFG.nombre||'DulceGestión'}</div>
   </div>`;
-  const pf=document.getElementById('pf');pf.innerHTML=html;pf.style.display='block';window.print();setTimeout(()=>{pf.style.display='none';},1000);
+  const pf=document.getElementById('pf');pf.innerHTML=html;pf.style.display='block';setTimeout(()=>{window.print();setTimeout(()=>{pf.style.display='none';},500);},200);
 }
 
 
