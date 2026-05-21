@@ -1230,7 +1230,6 @@ function renderInicio(){
   const vMes=pagosMes.filter(p=>p.tipo!=='cxp-pago'&&N(p.monto)>0).reduce((s,p)=>s+N(p.monto),0);
   const cobrar=peds.filter(p=>p.estado!=='cancelado').reduce((s,p)=>s+N(p.restante),0);
   const cxpPend=(DB.cxp||[]).filter(x=>x.estado!=='pagada').reduce((s,x)=>s+N(x.saldo),0);
-  const mes=today().slice(0,7);
   const gastosMesIni=(DB.gastos||[]).filter(g=>g.fecha&&normFecha(g.fecha).startsWith(mes)).reduce((s,g)=>s+N(g.monto),0);
   document.getElementById('sv-hoy').textContent=money(vHoy);document.getElementById('sv-cobrar').textContent=money(cobrar);document.getElementById('sv-activos').textContent=activos;document.getElementById('sv-mes').textContent=money(vMes);
   const cxpEl=document.getElementById('sv-cxp');if(cxpEl)cxpEl.textContent=money(cxpPend);
@@ -1522,7 +1521,8 @@ async function eliminarGasto(id){
   DB.gastos=DB.gastos.filter(x=>String(x.id)!==String(id));
   await syncRow('gastos','delete',null,id);
   renderRep('pnl');
-}const concepto=document.getElementById('g-concepto').value.trim(),monto=N(document.getElementById('g-monto').value);if(!concepto||!monto){toast('❌ Completa concepto y monto');return;}const g={id:uid(),concepto,monto,cat:document.getElementById('g-cat').value,fecha:document.getElementById('g-fecha').value||today(),metodo:document.getElementById('g-metodo')?.value||'Efectivo',notas:document.getElementById('g-notas').value,created:new Date().toISOString()};DB.gastos.push(g);syncRow('gastos','write',g,g.id);cm('mo-gasto');toast('✅ Gasto registrado');['g-concepto','g-monto','g-notas'].forEach(id=>{document.getElementById(id).value='';});if(CUR==='reportes')renderRep('pnl');}
+}
+function saveGasto(){const concepto=document.getElementById('g-concepto').value.trim(),monto=N(document.getElementById('g-monto').value);if(!concepto||!monto){toast('❌ Completa concepto y monto');return;}const g={id:uid(),concepto,monto,cat:document.getElementById('g-cat').value,fecha:document.getElementById('g-fecha').value||today(),metodo:document.getElementById('g-metodo')?.value||'Efectivo',notas:document.getElementById('g-notas').value,created:new Date().toISOString()};DB.gastos.push(g);syncRow('gastos','write',g,g.id);cm('mo-gasto');toast('✅ Gasto registrado');['g-concepto','g-monto','g-notas'].forEach(id=>{document.getElementById(id).value='';});if(CUR==='reportes')renderRep('pnl');}
 
 /* ═══════════════════════════════════════
    IMPRIMIR ESTADO DE RESULTADOS
