@@ -612,9 +612,12 @@ select.fc{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
   <div class="fg"><label class="fl">Concepto *</label><input class="fc" id="g-concepto"></div>
   <div class="fr2">
     <div class="fg"><label class="fl">Monto ($) *</label><input class="fc" id="g-monto" type="number"></div>
-    <div class="fg"><label class="fl">Categoría</label><select class="fc" id="g-cat"><option>Operativo</option><option>Insumos</option><option>Empaque</option><option>Publicidad</option><option>Servicios</option><option>Renta</option><option>Mano de obra</option><option>Otro</option></select></div>
+    <div class="fg"><label class="fl">Categoría</label><select class="fc" id="g-cat"><option>Operativo</option><option>Insumos</option><option>Empaque</option><option>Publicidad</option><option>Servicios</option><option>Renta</option><option>Mano de obra</option><option>CxP</option><option>Otro</option></select></div>
   </div>
-  <div class="fg"><label class="fl">Fecha</label><input class="fc" id="g-fecha" type="date"></div>
+  <div class="fr2">
+    <div class="fg"><label class="fl">Fecha</label><input class="fc" id="g-fecha" type="date"></div>
+    <div class="fg"><label class="fl">Método de pago</label><select class="fc" id="g-metodo"><option value="Efectivo">💵 Efectivo</option><option value="Transferencia">🏦 Transferencia</option><option value="Tarjeta">💳 Tarjeta</option></select></div>
+  </div>
   <div class="fg"><label class="fl">Notas</label><input class="fc" id="g-notas"></div>
   <button class="btn btn-amber btn-block" onclick="saveGasto()">💾 Registrar Gasto</button>
 </div></div>
@@ -1218,8 +1221,8 @@ function renderInicio(){
   const activos=peds.filter(p=>p.estado!=='cancelado'&&p.estado!=='entregado'&&p.fecha>=h).length;
   const pagosHoy=(DB.pagos||[]).filter(pg=>normFecha(pg.fecha)===h);
   const pagosMes=(DB.pagos||[]).filter(pg=>{const f=normFecha(pg.fecha);return f&&f.startsWith(mes);});
-  const vHoy=pagosHoy.reduce((s,p)=>s+N(p.monto),0);
-  const vMes=pagosMes.reduce((s,p)=>s+N(p.monto),0);
+  const vHoy=pagosHoy.filter(p=>p.tipo!=='cxp-pago'&&N(p.monto)>0).reduce((s,p)=>s+N(p.monto),0);
+  const vMes=pagosMes.filter(p=>p.tipo!=='cxp-pago'&&N(p.monto)>0).reduce((s,p)=>s+N(p.monto),0);
   const cobrar=peds.filter(p=>p.estado!=='cancelado').reduce((s,p)=>s+N(p.restante),0);
   const cxpPend=(DB.cxp||[]).filter(x=>x.estado!=='pagada').reduce((s,x)=>s+N(x.saldo),0);
   document.getElementById('sv-hoy').textContent=money(vHoy);document.getElementById('sv-cobrar').textContent=money(cobrar);document.getElementById('sv-activos').textContent=activos;document.getElementById('sv-mes').textContent=money(vMes);const cxpEl=document.getElementById('sv-cxp');if(cxpEl)cxpEl.textContent=money(cxpPend);
@@ -1478,7 +1481,7 @@ function cotAPed(id){const c=DB.cotizaciones.find(x=>x.id==id);if(!c)return;rese
 /* ═══════════════════════════════════════
    GASTOS
 ═══════════════════════════════════════ */
-function saveGasto(){const concepto=document.getElementById('g-concepto').value.trim(),monto=N(document.getElementById('g-monto').value);if(!concepto||!monto){toast('❌ Completa concepto y monto');return;}const g={id:uid(),concepto,monto,cat:document.getElementById('g-cat').value,fecha:document.getElementById('g-fecha').value||today(),notas:document.getElementById('g-notas').value,created:new Date().toISOString()};DB.gastos.push(g);syncRow('gastos','write',g,g.id);cm('mo-gasto');toast('✅ Gasto registrado');['g-concepto','g-monto','g-notas'].forEach(id=>{document.getElementById(id).value='';});if(CUR==='reportes')renderRep('pnl');}
+function saveGasto(){const concepto=document.getElementById('g-concepto').value.trim(),monto=N(document.getElementById('g-monto').value);if(!concepto||!monto){toast('❌ Completa concepto y monto');return;}const g={id:uid(),concepto,monto,cat:document.getElementById('g-cat').value,fecha:document.getElementById('g-fecha').value||today(),metodo:document.getElementById('g-metodo')?.value||'Efectivo',notas:document.getElementById('g-notas').value,created:new Date().toISOString()};DB.gastos.push(g);syncRow('gastos','write',g,g.id);cm('mo-gasto');toast('✅ Gasto registrado');['g-concepto','g-monto','g-notas'].forEach(id=>{document.getElementById(id).value='';});if(CUR==='reportes')renderRep('pnl');}
 
 /* ═══════════════════════════════════════
    IMPRIMIR ESTADO DE RESULTADOS
@@ -1547,26 +1550,32 @@ function imprimirVentasDia(){
     ${Object.entries(porMetodo).map(([m,v])=>`<tr><td style="padding:3px 7px;border-bottom:1px solid #eee">${m}</td><td style="padding:3px 7px;border-bottom:1px solid #eee;text-align:right;font-weight:700">${money(v)}</td></tr>`).join('')}
     <tr style="background:#f9f9f9"><td style="padding:5px 7px;font-weight:700">TOTAL INGRESOS</td><td style="padding:5px 7px;text-align:right;font-weight:700">${money(totalIngresos)}</td></tr>
     </tbody></table></div>`:''}
+    ${pagosCxpHoy.length?`<div style="margin-bottom:14px">
+    <div style="font-weight:700;margin-bottom:5px;font-size:.9rem;color:#c0302a">💳 Pagos a proveedores (${pagosCxpHoy.length})</div>
+    <table style="width:100%;border-collapse:collapse;font-size:.82rem">
+    <thead><tr style="background:#fff0f0"><th style="padding:5px 7px;text-align:left">Proveedor</th><th style="padding:5px 7px;text-align:left">Concepto</th><th style="padding:5px 7px;text-align:right">Monto</th><th style="padding:5px 7px;text-align:right">Método</th></tr></thead>
+    <tbody>${cxpRows}</tbody>
+    <tfoot><tr style="background:#fff0f0"><td colspan="2" style="padding:5px 7px;font-weight:700;color:#c0302a">TOTAL PAGADO</td><td style="padding:5px 7px;text-align:right;font-weight:700;color:#c0302a">-${money(totalCxpPagado)}</td><td></td></tr></tfoot>
+    </table></div>`:''}
     <div style="margin-bottom:14px;background:linear-gradient(135deg,#1c0f00,#2d1a00);border-radius:12px;padding:14px 16px;color:#f5e6c8">
       <div style="font-weight:700;font-size:.88rem;margin-bottom:10px;letter-spacing:.03em">📊 NETO EN CAJA POR MÉTODO DE PAGO</div>
       ${['Efectivo','Transferencia','Tarjeta'].map(met=>{
         const ingMet=(pagosIngreso||[]).filter(p=>(p.metodo||'Efectivo')===met).reduce((s,p)=>s+N(p.monto),0);
-        // Restar solo gastos del día del mismo método (CxP registrados como gasto + gastos manuales)
-        const gastosHoy=(DB.gastos||[]).filter(g=>normFecha(g.fecha)===h&&(g.metodo||'Efectivo')===met);
-        const egresosMet=gastosHoy.reduce((s,g)=>s+N(g.monto),0);
-        const neto=ingMet-egresosMet;
-        if(ingMet===0&&egresosMet===0)return'';
+        const gastosMet=(DB.gastos||[]).filter(g=>normFecha(g.fecha)===h&&(g.metodo||'Efectivo')===met).reduce((s,g)=>s+N(g.monto),0);
+        const neto=ingMet-gastosMet;
+        if(ingMet===0&&gastosMet===0)return'';
         const icon=met==='Efectivo'?'💵':met==='Transferencia'?'🏦':'💳';
+        const label=met==='Transferencia'?'Transferencias a Ctas.':met==='Tarjeta'?'Ingresos x Tarjeta':'Efectivo en Caja';
         return`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.1)">
-          <div><div style="font-size:.8rem;font-weight:700">${icon} ${met==='Transferencia'?'Transferencias a Ctas.':met==='Tarjeta'?'Ingresos x Tarjeta':'Efectivo en Caja'}</div>
-          ${egresosMet>0?`<div style="font-size:.68rem;color:#f5c878;opacity:.8">Ingresos: ${money(ingMet)} − Gastos: ${money(egresosMet)}</div>`:''}
+          <div><div style="font-size:.8rem;font-weight:700">${icon} ${label}</div>
+          ${gastosMet>0?`<div style="font-size:.68rem;color:#f5c878;opacity:.8">Ing: ${money(ingMet)} − Gastos: ${money(gastosMet)}</div>`:''}
           </div>
           <div style="font-size:1.05rem;font-weight:700;color:${neto>=0?'#7fff9a':'#ff9090'}">${money(neto)}</div>
         </div>`;
       }).join('')}
-      <div style="display:flex;justify-content:space-between;align-items:center;padding-top:8px;margin-top:4px">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding-top:8px;margin-top:4px;border-top:1px solid rgba(255,255,255,.2)">
         <div style="font-size:.85rem;font-weight:700">CAJA NETA TOTAL</div>
-        <div style="font-size:1.2rem;font-weight:700;color:#f5c878">${money(cajaNeta)}</div>
+        <div style="font-size:1.2rem;font-weight:700;color:${cajaNeta>=0?'#f5c878':'#ff9090'}">${money(cajaNeta)}</div>
       </div>
     </div>
     ${pedidosHoy.length?`<div style="margin-bottom:14px"><div style="font-weight:700;margin-bottom:5px;font-size:.9rem">📦 Pedidos del día (${pedidosHoy.length})</div>
@@ -1577,10 +1586,6 @@ function imprimirVentasDia(){
     <table style="width:100%;border-collapse:collapse;font-size:.82rem">
     <thead><tr style="background:#f5f5f5"><th style="padding:5px 7px;text-align:left">#</th><th style="padding:5px 7px;text-align:left">Productos</th><th style="padding:5px 7px;text-align:right">Total</th><th style="padding:5px 7px;text-align:right">Método</th></tr></thead>
     <tbody>${ventaRows}</tbody></table></div>`:''}
-    ${pagosCxpHoy.length?`<div style="margin-bottom:14px"><div style="font-weight:700;margin-bottom:5px;font-size:.9rem;color:#c0302a">💳 Pagos a proveedores (${pagosCxpHoy.length})</div>
-    <table style="width:100%;border-collapse:collapse;font-size:.82rem">
-    <thead><tr style="background:#fff0f0"><th style="padding:5px 7px;text-align:left">Proveedor</th><th style="padding:5px 7px;text-align:left">Concepto</th><th style="padding:5px 7px;text-align:right">Monto</th><th style="padding:5px 7px;text-align:right">Método</th></tr></thead>
-    <tbody>${cxpRows}</tbody></table></div>`:''}
     ${!pedidosHoy.length&&!ventasHoy.length&&!pagosCxpHoy.length?'<div style="text-align:center;color:#888;padding:20px">Sin movimientos registrados hoy</div>':''}
     <div style="text-align:center;font-size:.75rem;color:#888;margin-top:20px;border-top:1px solid #ccc;padding-top:8px">Generado el ${new Date().toLocaleDateString('es')} a las ${new Date().toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit'})} — ${CFG.nombre||'DulceGestión'}</div>
   </div>`;
@@ -1601,8 +1606,8 @@ function renderRep(tab){
   const cont=document.getElementById('rep-content');if(!cont)return;
   const filtMes=getRepMes();
   if(tab==='ventas'){
-    const l6=[];for(let i=5;i>=0;i--){const d=new Date();d.setDate(1);d.setMonth(d.getMonth()-i);const mStr=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;const lbl=d.toLocaleDateString('es',{month:'short',year:'2-digit'});const mP=(DB.pagos||[]).filter(pg=>{const f=normFecha(pg.fecha);return f&&f.startsWith(mStr);}).reduce((s,pg)=>s+N(pg.monto),0);l6.push({lbl,mStr,total:mP});}const mx6=Math.max(...l6.map(m=>m.total),1);
-    const today7=today();const dias=[];for(let i=6;i>=0;i--){const d=new Date(Date.now()-i*86400000);const k=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;const lbl=d.toLocaleDateString('es',{day:'2-digit',month:'2-digit'});const t=(DB.pagos||[]).filter(pg=>normFecha(pg.fecha)===k).reduce((s,pg)=>s+N(pg.monto),0);dias.push({lbl,t});}const mx=Math.max(...dias.map(d=>d.t),1);
+    const l6=[];for(let i=5;i>=0;i--){const d=new Date();d.setDate(1);d.setMonth(d.getMonth()-i);const mStr=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;const lbl=d.toLocaleDateString('es',{month:'short',year:'2-digit'});const mP=(DB.pagos||[]).filter(pg=>{const f=normFecha(pg.fecha);return f&&f.startsWith(mStr)&&pg.tipo!=='cxp-pago'&&N(pg.monto)>0;}).reduce((s,pg)=>s+N(pg.monto),0);l6.push({lbl,mStr,total:mP});}const mx6=Math.max(...l6.map(m=>m.total),1);
+    const today7=today();const dias=[];for(let i=6;i>=0;i--){const d=new Date(Date.now()-i*86400000);const k=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;const lbl=d.toLocaleDateString('es',{day:'2-digit',month:'2-digit'});const t=(DB.pagos||[]).filter(pg=>normFecha(pg.fecha)===k&&pg.tipo!=='cxp-pago'&&N(pg.monto)>0).reduce((s,pg)=>s+N(pg.monto),0);dias.push({lbl,t});}const mx=Math.max(...dias.map(d=>d.t),1);
     const pagosMes=(DB.pagos||[]).filter(pg=>{const f=normFecha(pg.fecha);return f&&f.startsWith(filtMes);});
     const cobradoMes=pagosMes.filter(pg=>pg.tipo!=='cxp-pago'&&N(pg.monto)>0).reduce((s,pg)=>s+N(pg.monto),0);const pedidosMes=PEDS_DB().filter(p=>{const f=normFecha(p.fecha);return f.startsWith(filtMes)&&p.estado!=='cancelado';}).length;const porCobrar=PEDS_DB().filter(p=>p.estado!=='cancelado').reduce((s,p)=>s+N(p.restante),0);const cobradoTotal=(DB.pagos||[]).filter(pg=>pg.tipo!=='cxp-pago'&&N(pg.monto)>0).reduce((s,pg)=>s+N(pg.monto),0);const cxpPendRep=(DB.cxp||[]).filter(x=>x.estado!=='pagada').reduce((s,x)=>s+N(x.saldo),0);const mesLbl=new Date(filtMes+'-02').toLocaleDateString('es',{month:'long',year:'numeric'});
     cont.innerHTML=`<div class="sg"><div class="sc sc-a"><div class="sl">Cobrado</div><div class="sv">${money(cobradoMes)}</div><div class="ss">${mesLbl.split(' ')[0]}</div></div><div class="sc sc-c"><div class="sl">Pedidos</div><div class="sv">${pedidosMes}</div><div class="ss">del mes</div></div><div class="sc sc-e"><div class="sl">Total Cobrado</div><div class="sv">${money(cobradoTotal)}</div><div class="ss">histórico</div></div><div class="sc sc-b"><div class="sl">Por Cobrar</div><div class="sv">${money(porCobrar)}</div><div class="ss">pendiente</div></div><div class="sc sc-rust"><div class="sl">Pend. Pagar</div><div class="sv">${money(cxpPendRep)}</div><div class="ss">CxP pendiente</div></div></div>
