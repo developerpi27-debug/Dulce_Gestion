@@ -246,6 +246,7 @@ select.fc{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
         <div class="sc sc-c"><div class="sl">Activos</div><div class="sv" id="sv-activos">0</div><div class="ss">en producción</div></div>
         <div class="sc sc-d"><div class="sl">Mes</div><div class="sv" id="sv-mes">$0</div><div class="ss">ingresos</div></div>
         <div class="sc sc-rust"><div class="sl">Pend. Pagar</div><div class="sv" id="sv-cxp">$0</div><div class="ss">CxP pendiente</div></div>
+        <div class="sc" style="background:linear-gradient(135deg,rgba(120,80,180,.13),rgba(120,80,180,.06));border:1.5px solid rgba(120,80,180,.25)"><div class="sl" style="color:#7850b4">Gastos Mes</div><div class="sv" id="sv-gastos-mes" style="color:#7850b4">$0</div><div class="ss">egresos registrados</div></div>
       </div>
       <div class="shd"><h3>📋 Pedidos para HOY</h3><button class="btn-link" onclick="sv('pedidos')">Ver todos →</button></div>
       <div id="hoy-list"></div>
@@ -299,7 +300,10 @@ select.fc{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
         <select class="fc" id="rep-mes-filter" onchange="renderRep(repTab)" style="font-size:.76rem;padding:6px 10px;max-width:155px"></select>
         <select class="fc" id="rep-anio-filter" onchange="buildRepMeses();renderRep(repTab)" style="font-size:.76rem;padding:6px 10px;max-width:90px"></select>
-        <button class="btn btn-ghost btn-sm" onclick="imprimirVentasDia()" style="margin-left:auto">🖨 Ventas de hoy</button>
+        <div style="display:flex;gap:5px;align-items:center;margin-left:auto">
+          <input type="date" id="rep-dia-filter" class="fc" style="font-size:.76rem;padding:6px 10px;max-width:145px" title="Fecha del informe de ventas">
+          <button class="btn btn-ghost btn-sm" onclick="imprimirVentasDia(document.getElementById('rep-dia-filter').value||today())">🖨 Ventas del día</button>
+        </div>
       </div>
       <div id="rep-content"></div>
     </div>
@@ -524,8 +528,9 @@ select.fc{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
   </div>
   <div class="fr2">
     <div class="fg"><label class="fl">Anticipo</label><input class="fc" id="f-anticipo" type="number" placeholder="0.00" oninput="calcRest()"></div>
-    <div class="fg"><label class="fl">Restante</label><input class="fc" id="f-rest" readonly style="background:var(--paper)"></div>
+    <div class="fg"><label class="fl">Método anticipo</label><select class="fc" id="f-ant-metodo"><option value="Efectivo">💵 Efectivo</option><option value="Transferencia">🏦 Transferencia</option><option value="Tarjeta">💳 Tarjeta</option></select></div>
   </div>
+  <div class="fg"><label class="fl">Restante</label><input class="fc" id="f-rest" readonly style="background:var(--paper)"></div>
   <div class="fg"><label class="fl">Notas</label><textarea class="fc" id="f-notas" rows="2"></textarea></div>
   <div class="fg"><label class="fl">Estado inicial</label><select class="fc" id="f-estado"><option value="pendiente">Pendiente</option><option value="en_proceso">En proceso</option></select></div>
   <input type="hidden" id="f-edit-id">
@@ -1225,7 +1230,11 @@ function renderInicio(){
   const vMes=pagosMes.filter(p=>p.tipo!=='cxp-pago'&&N(p.monto)>0).reduce((s,p)=>s+N(p.monto),0);
   const cobrar=peds.filter(p=>p.estado!=='cancelado').reduce((s,p)=>s+N(p.restante),0);
   const cxpPend=(DB.cxp||[]).filter(x=>x.estado!=='pagada').reduce((s,x)=>s+N(x.saldo),0);
-  document.getElementById('sv-hoy').textContent=money(vHoy);document.getElementById('sv-cobrar').textContent=money(cobrar);document.getElementById('sv-activos').textContent=activos;document.getElementById('sv-mes').textContent=money(vMes);const cxpEl=document.getElementById('sv-cxp');if(cxpEl)cxpEl.textContent=money(cxpPend);
+  const mes=today().slice(0,7);
+  const gastosMesIni=(DB.gastos||[]).filter(g=>g.fecha&&normFecha(g.fecha).startsWith(mes)).reduce((s,g)=>s+N(g.monto),0);
+  document.getElementById('sv-hoy').textContent=money(vHoy);document.getElementById('sv-cobrar').textContent=money(cobrar);document.getElementById('sv-activos').textContent=activos;document.getElementById('sv-mes').textContent=money(vMes);
+  const cxpEl=document.getElementById('sv-cxp');if(cxpEl)cxpEl.textContent=money(cxpPend);
+  const gmEl=document.getElementById('sv-gastos-mes');if(gmEl)gmEl.textContent=money(gastosMesIni);
   const banner=document.getElementById('lic-banner-app');
   if(CFG.licFecha){let l=CFG.licFecha;if(typeof l==='number')l=new Date(Math.round((l-25569)*86400*1000)).toISOString().slice(0,10);else if(l&&String(l).includes('/')){const[d,m,y]=String(l).split('/');l=`${y}-${m}-${d}`;}const dias=Math.ceil((new Date(l)-new Date())/(1000*60*60*24));if(dias<=0)banner.innerHTML=`<div class="lic-banner"><span>⛔</span><div><b>Licencia vencida</b></div></div>`;else if(dias<=(CFG.licDias||7))banner.innerHTML=`<div class="lic-banner warn"><span>⚠️</span><div><b>Licencia vence en ${dias} día(s)</b></div></div>`;else banner.innerHTML='';}
   document.getElementById('hoy-list').innerHTML=pedHoy.length?pedHoy.map(todayCard).join(''):emptyHTML('🌸','Sin pedidos para hoy');
@@ -1355,7 +1364,7 @@ function confirmCobro(){if(cobroMode==='venta'){confirmarCobroVenta();return;}co
    PEDIDO FORM
 ═══════════════════════════════════════ */
 let ecCnt=0;
-function resetPedForm(){ecCnt=0;['f-cli','f-tel','f-desc','f-total','f-anticipo','f-rest','f-notas'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});document.getElementById('f-qty').value='1';document.getElementById('f-fecha').value=today();document.getElementById('f-hora').value='10:00';document.getElementById('f-estado').value='pendiente';document.getElementById('f-rec').value='';document.getElementById('f-edit-id').value='';document.getElementById('rec-prev').style.display='none';document.getElementById('extra-create-wrap').innerHTML='';const bd=document.getElementById('f-price-breakdown');if(bd)bd.style.display='none';document.getElementById('ped-titulo').textContent='Nuevo Pedido';fillRecSel();}
+function resetPedForm(){ecCnt=0;['f-cli','f-tel','f-desc','f-total','f-anticipo','f-rest','f-notas'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});document.getElementById('f-qty').value='1';document.getElementById('f-fecha').value=today();document.getElementById('f-hora').value='10:00';document.getElementById('f-estado').value='pendiente';document.getElementById('f-rec').value='';document.getElementById('f-edit-id').value='';const amEl=document.getElementById('f-ant-metodo');if(amEl)amEl.value='Efectivo';document.getElementById('rec-prev').style.display='none';document.getElementById('extra-create-wrap').innerHTML='';const bd=document.getElementById('f-price-breakdown');if(bd)bd.style.display='none';document.getElementById('ped-titulo').textContent='Nuevo Pedido';fillRecSel();}
 function fillRecSel(){const sel=document.getElementById('f-rec');sel.innerHTML='<option value="">— Sin vincular —</option>';PRODS_DB().forEach(p=>sel.innerHTML+=`<option value="${p.id}">${p.nombre} — ${money(p.precio)}</option>`);}
 function onRecSel(){const id=parseInt(document.getElementById('f-rec').value);const prev=document.getElementById('rec-prev');if(!id){prev.style.display='none';return;}const prod=PRODS_DB().find(p=>p.id==id);if(!prod){prev.style.display='none';return;}if(!document.getElementById('f-desc').value)document.getElementById('f-desc').value=prod.nombre;recalcTotal();showRecPrev(prod,parseInt(document.getElementById('f-qty').value)||1);}
 function onQtyChange(){recalcTotal();const id=parseInt(document.getElementById('f-rec').value);if(!id)return;const prod=PRODS_DB().find(p=>p.id==id);if(prod)showRecPrev(prod,parseInt(document.getElementById('f-qty').value)||1);}
@@ -1380,7 +1389,7 @@ function savePed(){const cli=document.getElementById('f-cli').value.trim(),descr
     const p={id:uid(),cliente:cli,telefono:document.getElementById('f-tel').value,descr,qty,total,anticipo:ant,restante:total-ant,fecha,hora:document.getElementById('f-hora').value,estado:document.getElementById('f-estado').value,notas:document.getElementById('f-notas').value,recId,ingsCalc,extrasCreate:extras,extrasProduccion:[],extrasEntrega:[],ingsUsados:[],created:new Date().toISOString(),updated:new Date().toISOString()};
     DB.pedidos.push(p);syncRow('pedidos','write',p,p.id);
     if(extras.length>0){const er={id:'ext_'+p.id,pedido_id:p.id,extras,created:new Date().toISOString()};DB.extras_pedidos.push(er);syncRow('extras_pedidos','write',er,er.id);}
-    if(ant>0){const pg={id:uid(),pedidoId:p.id,cliente:p.cliente,monto:ant,tipo:'anticipo',fecha:today(),metodo:'Efectivo',created:new Date().toISOString()};DB.pagos.push(pg);syncRow('pagos','write',pg,pg.id);}
+    if(ant>0){const antMetodo=document.getElementById('f-ant-metodo')?.value||'Efectivo';const pg={id:uid(),pedidoId:p.id,cliente:p.cliente,monto:ant,tipo:'anticipo',fecha:today(),metodo:antMetodo,created:new Date().toISOString()};DB.pagos.push(pg);syncRow('pagos','write',pg,pg.id);}
   }cm('mo-ped');toast('✅ Pedido guardado');resetPedForm();renderV(CUR);}
 function openEditPed(id){const p=PEDS_DB().find(x=>x.id==id);if(!p)return;resetPedForm();cm('mo-ver');document.getElementById('ped-titulo').textContent='Editar Pedido';document.getElementById('f-edit-id').value=id;document.getElementById('f-cli').value=p.cliente;document.getElementById('f-tel').value=p.telefono||'';document.getElementById('f-desc').value=p.descr;document.getElementById('f-qty').value=p.qty;document.getElementById('f-total').value=p.total;document.getElementById('f-anticipo').value=p.anticipo;document.getElementById('f-rest').value=money(p.restante);document.getElementById('f-fecha').value=p.fecha;document.getElementById('f-hora').value=p.hora;document.getElementById('f-notas').value=p.notas||'';document.getElementById('f-estado').value=p.estado;if(p.recId){document.getElementById('f-rec').value=p.recId;onRecSel();}om('mo-ped');}
 function addExtraRow(wrapId,prefix){const wrap=document.getElementById(wrapId);const n=prefix==='le'?listoExtCnt++:prefix==='ee'?entExtCnt++:ecCnt++;const div=document.createElement('div');div.id=`${prefix}-row-${n}`;div.style.cssText='display:grid;grid-template-columns:1fr 68px 46px 28px;gap:5px;align-items:center;margin-bottom:5px;';const isCreate=(prefix==='ec');
@@ -1481,7 +1490,39 @@ function cotAPed(id){const c=DB.cotizaciones.find(x=>x.id==id);if(!c)return;rese
 /* ═══════════════════════════════════════
    GASTOS
 ═══════════════════════════════════════ */
-function saveGasto(){const concepto=document.getElementById('g-concepto').value.trim(),monto=N(document.getElementById('g-monto').value);if(!concepto||!monto){toast('❌ Completa concepto y monto');return;}const g={id:uid(),concepto,monto,cat:document.getElementById('g-cat').value,fecha:document.getElementById('g-fecha').value||today(),metodo:document.getElementById('g-metodo')?.value||'Efectivo',notas:document.getElementById('g-notas').value,created:new Date().toISOString()};DB.gastos.push(g);syncRow('gastos','write',g,g.id);cm('mo-gasto');toast('✅ Gasto registrado');['g-concepto','g-monto','g-notas'].forEach(id=>{document.getElementById(id).value='';});if(CUR==='reportes')renderRep('pnl');}
+async function eliminarGasto(id){
+  if(!confirm('¿Eliminar este gasto?'))return;
+  const g=DB.gastos.find(x=>String(x.id)===String(id));
+  if(!g)return;
+  // Si es un gasto de CxP, revertir en la tabla pagos y en CxP
+  if(g.cat==='CxP'){
+    // Buscar el pago CxP asociado (mismo monto, mismo día, tipo cxp-pago)
+    const pgAsoc=(DB.pagos||[]).find(p=>p.tipo==='cxp-pago'&&normFecha(p.fecha)===normFecha(g.fecha)&&Math.abs(N(p.monto))===N(g.monto));
+    if(pgAsoc){
+      await syncRow('pagos','delete',null,pgAsoc.id);
+      DB.pagos=DB.pagos.filter(p=>p.id!==pgAsoc.id);
+      // Buscar CxP vinculada por tercero y revertir su estado
+      const cxpAsoc=(DB.cxp||[]).find(x=>x.tercero===pgAsoc.cliente&&x.estado!=='pendiente');
+      if(cxpAsoc){
+        cxpAsoc.abonado=Math.max(0,N(cxpAsoc.abonado)-N(g.monto));
+        cxpAsoc.saldo=Math.min(N(cxpAsoc.monto),N(cxpAsoc.saldo)+N(g.monto));
+        cxpAsoc.estado=cxpAsoc.saldo>=N(cxpAsoc.monto)?'pendiente':cxpAsoc.abonado>0?'parcial':'pendiente';
+        cxpAsoc.updated=new Date().toISOString();
+        syncRow('cxp','update',cxpAsoc,cxpAsoc.id);
+        toast(`✅ Gasto eliminado — CxP revertida (${cxpAsoc.tercero} debe ${money(cxpAsoc.saldo)})`);
+      }else{
+        toast('✅ Gasto eliminado — pago CxP removido');
+      }
+    }else{
+      toast('✅ Gasto eliminado');
+    }
+  }else{
+    toast('✅ Gasto eliminado');
+  }
+  DB.gastos=DB.gastos.filter(x=>String(x.id)!==String(id));
+  await syncRow('gastos','delete',null,id);
+  renderRep('pnl');
+}const concepto=document.getElementById('g-concepto').value.trim(),monto=N(document.getElementById('g-monto').value);if(!concepto||!monto){toast('❌ Completa concepto y monto');return;}const g={id:uid(),concepto,monto,cat:document.getElementById('g-cat').value,fecha:document.getElementById('g-fecha').value||today(),metodo:document.getElementById('g-metodo')?.value||'Efectivo',notas:document.getElementById('g-notas').value,created:new Date().toISOString()};DB.gastos.push(g);syncRow('gastos','write',g,g.id);cm('mo-gasto');toast('✅ Gasto registrado');['g-concepto','g-monto','g-notas'].forEach(id=>{document.getElementById(id).value='';});if(CUR==='reportes')renderRep('pnl');}
 
 /* ═══════════════════════════════════════
    IMPRIMIR ESTADO DE RESULTADOS
@@ -1504,8 +1545,8 @@ function imprimirPNL(){
 /* ═══════════════════════════════════════
    REPORTE VENTAS DEL DÍA
 ═══════════════════════════════════════ */
-function imprimirVentasDia(){
-  const h=today();
+function imprimirVentasDia(fechaParam){
+  const h=fechaParam&&fechaParam.match(/^\d{4}-\d{2}-\d{2}/)?fechaParam.slice(0,10):today();
   const pagosHoy=(DB.pagos||[]).filter(pg=>normFecha(pg.fecha)===h);
   const ventasHoy=(DB.ventas||[]).filter(v=>normFecha(v.fecha)===h);
   const pedidosHoy=PEDS_DB().map(p=>({...p,fecha:normFecha(p.fecha)})).filter(p=>p.fecha===h&&p.estado!=='cancelado');
@@ -1578,7 +1619,8 @@ function imprimirVentasDia(){
         <div style="font-size:1.2rem;font-weight:700;color:${cajaNeta>=0?'#f5c878':'#ff9090'}">${money(cajaNeta)}</div>
       </div>
     </div>
-    ${pedidosHoy.length?`<div style="margin-bottom:14px"><div style="font-weight:700;margin-bottom:5px;font-size:.9rem">📦 Pedidos del día (${pedidosHoy.length})</div>
+    ${pedidosHoy.length?`<div style="margin-bottom:14px"><div style="font-weight:700;margin-bottom:5px;font-size:.9rem">📦 Pedidos a entregar este día (${pedidosHoy.length})</div>
+    <div style="font-size:.72rem;color:#888;font-style:italic;margin-bottom:6px;background:#f9f9f9;padding:5px 8px;border-radius:6px;border-left:3px solid #ccc">📌 Este es un detalle de los pedidos a entregar este día. El pago pudo haber sido recibido en otro día.</div>
     <table style="width:100%;border-collapse:collapse;font-size:.82rem">
     <thead><tr style="background:#f5f5f5"><th style="padding:5px 7px;text-align:left">Cliente</th><th style="padding:5px 7px;text-align:left">Producto</th><th style="padding:5px 7px;text-align:right">Total</th><th style="padding:5px 7px;text-align:right">Estado pago</th></tr></thead>
     <tbody>${pedRows}</tbody></table></div>`:''}
@@ -1609,11 +1651,13 @@ function renderRep(tab){
     const l6=[];for(let i=5;i>=0;i--){const d=new Date();d.setDate(1);d.setMonth(d.getMonth()-i);const mStr=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;const lbl=d.toLocaleDateString('es',{month:'short',year:'2-digit'});const mP=(DB.pagos||[]).filter(pg=>{const f=normFecha(pg.fecha);return f&&f.startsWith(mStr)&&pg.tipo!=='cxp-pago'&&N(pg.monto)>0;}).reduce((s,pg)=>s+N(pg.monto),0);l6.push({lbl,mStr,total:mP});}const mx6=Math.max(...l6.map(m=>m.total),1);
     const today7=today();const dias=[];for(let i=6;i>=0;i--){const d=new Date(Date.now()-i*86400000);const k=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;const lbl=d.toLocaleDateString('es',{day:'2-digit',month:'2-digit'});const t=(DB.pagos||[]).filter(pg=>normFecha(pg.fecha)===k&&pg.tipo!=='cxp-pago'&&N(pg.monto)>0).reduce((s,pg)=>s+N(pg.monto),0);dias.push({lbl,t});}const mx=Math.max(...dias.map(d=>d.t),1);
     const pagosMes=(DB.pagos||[]).filter(pg=>{const f=normFecha(pg.fecha);return f&&f.startsWith(filtMes);});
-    const cobradoMes=pagosMes.filter(pg=>pg.tipo!=='cxp-pago'&&N(pg.monto)>0).reduce((s,pg)=>s+N(pg.monto),0);const pedidosMes=PEDS_DB().filter(p=>{const f=normFecha(p.fecha);return f.startsWith(filtMes)&&p.estado!=='cancelado';}).length;const porCobrar=PEDS_DB().filter(p=>p.estado!=='cancelado').reduce((s,p)=>s+N(p.restante),0);const cobradoTotal=(DB.pagos||[]).filter(pg=>pg.tipo!=='cxp-pago'&&N(pg.monto)>0).reduce((s,pg)=>s+N(pg.monto),0);const cxpPendRep=(DB.cxp||[]).filter(x=>x.estado!=='pagada').reduce((s,x)=>s+N(x.saldo),0);const mesLbl=new Date(filtMes+'-02').toLocaleDateString('es',{month:'long',year:'numeric'});
-    cont.innerHTML=`<div class="sg"><div class="sc sc-a"><div class="sl">Cobrado</div><div class="sv">${money(cobradoMes)}</div><div class="ss">${mesLbl.split(' ')[0]}</div></div><div class="sc sc-c"><div class="sl">Pedidos</div><div class="sv">${pedidosMes}</div><div class="ss">del mes</div></div><div class="sc sc-e"><div class="sl">Total Cobrado</div><div class="sv">${money(cobradoTotal)}</div><div class="ss">histórico</div></div><div class="sc sc-b"><div class="sl">Por Cobrar</div><div class="sv">${money(porCobrar)}</div><div class="ss">pendiente</div></div><div class="sc sc-rust"><div class="sl">Pend. Pagar</div><div class="sv">${money(cxpPendRep)}</div><div class="ss">CxP pendiente</div></div></div>
+    const cobradoMes=pagosMes.filter(pg=>pg.tipo!=='cxp-pago'&&N(pg.monto)>0).reduce((s,pg)=>s+N(pg.monto),0);const pedidosMes=PEDS_DB().filter(p=>{const f=normFecha(p.fecha);return f.startsWith(filtMes)&&p.estado!=='cancelado';}).length;const porCobrar=PEDS_DB().filter(p=>p.estado!=='cancelado').reduce((s,p)=>s+N(p.restante),0);const cobradoTotal=(DB.pagos||[]).filter(pg=>pg.tipo!=='cxp-pago'&&N(pg.monto)>0).reduce((s,pg)=>s+N(pg.monto),0);const cxpPendRep=(DB.cxp||[]).filter(x=>x.estado!=='pagada').reduce((s,x)=>s+N(x.saldo),0);
+    const gastosMesRep=(DB.gastos||[]).filter(g=>g.fecha&&normFecha(g.fecha).startsWith(filtMes)).reduce((s,g)=>s+N(g.monto),0);
+    const mesLblVentas=new Date(filtMes+'-02').toLocaleDateString('es',{month:'long',year:'numeric'});
+    cont.innerHTML=`<div class="sg"><div class="sc sc-a"><div class="sl">Cobrado</div><div class="sv">${money(cobradoMes)}</div><div class="ss">${mesLblVentas.split(' ')[0]}</div></div><div class="sc sc-c"><div class="sl">Pedidos</div><div class="sv">${pedidosMes}</div><div class="ss">del mes</div></div><div class="sc sc-e"><div class="sl">Total Cobrado</div><div class="sv">${money(cobradoTotal)}</div><div class="ss">histórico</div></div><div class="sc sc-b"><div class="sl">Por Cobrar</div><div class="sv">${money(porCobrar)}</div><div class="ss">pendiente</div></div><div class="sc sc-rust"><div class="sl">Pend. Pagar</div><div class="sv">${money(cxpPendRep)}</div><div class="ss">CxP pendiente</div></div><div class="sc" style="background:linear-gradient(135deg,rgba(120,80,180,.13),rgba(120,80,180,.06));border:1.5px solid rgba(120,80,180,.25)"><div class="sl" style="color:#7850b4">Gastos Mes</div><div class="sv" style="color:#7850b4">${money(gastosMesRep)}</div><div class="ss">egresos registrados</div></div></div>
     <div class="card"><div class="card-hd">📈 Últimos 7 días</div><div class="cbar-wrap">${dias.map(d=>`<div class="cbar-row"><div class="cbar-label">${d.lbl}</div><div class="cbar-bg"><div class="cbar-fill" style="width:${Math.round(d.t/mx*100)}%;background:var(--amber)"></div></div><div class="cbar-val">${money(d.t)}</div></div>`).join('')}</div></div>
     <div class="card"><div class="card-hd">📊 Últimos 6 meses</div><div class="cbar-wrap">${l6.map(m=>`<div class="cbar-row"><div class="cbar-label" style="font-size:.62rem">${m.lbl}</div><div class="cbar-bg"><div class="cbar-fill" style="width:${Math.round(m.total/mx6*100)}%;background:${m.mStr===filtMes?'var(--amber)':'var(--blue2)'}"></div></div><div class="cbar-val" style="font-size:.65rem">${money(m.total)}</div></div>`).join('')}</div></div>
-    <div class="card"><div class="card-hd">📋 Cobros — ${mesLbl}</div>${pagosMes.length?pagosMes.map(pg=>`<div class="li"><div class="la bg-c">💰</div><div class="lb"><div class="lt">${pg.cliente||'—'}</div><div class="ls">${pg.tipo} · ${fDate(pg.fecha)} · ${pg.metodo||'—'}</div></div><div class="lm"><div class="lamt">${money(pg.monto)}</div></div></div>`).join(''):`<div class="empty" style="padding:12px"><div class="empty-t">Sin cobros</div></div>`}</div>`;
+    <div class="card"><div class="card-hd">📋 Cobros — ${mesLblVentas}</div>${pagosMes.length?pagosMes.map(pg=>`<div class="li"><div class="la bg-c">💰</div><div class="lb"><div class="lt">${pg.cliente||'—'}</div><div class="ls">${pg.tipo} · ${fDate(pg.fecha)} · ${pg.metodo||'—'}</div></div><div class="lm"><div class="lamt">${money(pg.monto)}</div></div></div>`).join(''):`<div class="empty" style="padding:12px"><div class="empty-t">Sin cobros</div></div>`}</div>`;
   } else if(tab==='pnl'){
     const mesLbl=new Date(filtMes+'-02').toLocaleDateString('es',{month:'long',year:'numeric'});
     const pA=v=>{if(!v||v===''||v==='null')return[];if(Array.isArray(v))return v;let s=String(v);for(let i=0;i<3;i++){s=s.trim();if(!s.startsWith('[')&&!s.startsWith('{'))break;try{const p=JSON.parse(s);if(Array.isArray(p))return p;if(typeof p==='string'){s=p;continue;}break;}catch{break;}}return[];};
@@ -1668,7 +1712,7 @@ function renderRep(tab){
       ${ING().filter(i=>N(i.costo)>0&&N(i.cant)>0).map(i=>`<div class="pnl-row"><span class="pnl-label">${i.nombre} (${R(i.cant)} ${i.unidad})</span><span class="pnl-val" style="font-size:.88rem">${money(N(i.costo)*N(i.cant))}</span></div>`).join('')}
     </div>
     <div class="card"><div class="card-hd">💸 Gastos — ${mesLbl}</div>
-      ${gastosMesPnl.length?gastosMesPnl.map(g=>`<div class="li"><div class="la bg-b">💸</div><div class="lb"><div class="lt">${g.concepto}</div><div class="ls">${g.cat} · ${fDate(normFecha(g.fecha))}</div></div><div class="lm"><div class="lamt" style="color:var(--rust2)">${money(g.monto)}</div>${can('ver_gastos')?`<button onclick="if(confirm('¿Eliminar?')){DB.gastos=DB.gastos.filter(x=>x.id!=${g.id});syncRow('gastos','delete',null,${g.id});renderRep('pnl')}" style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:.78rem">✕</button>`:''}</div></div>`).join(''):`<div class="empty" style="padding:12px"><div class="empty-t">Sin gastos</div></div>`}
+      ${gastosMesPnl.length?gastosMesPnl.map(g=>`<div class="li"><div class="la bg-b">💸</div><div class="lb"><div class="lt">${g.concepto}</div><div class="ls">${g.cat} · ${fDate(normFecha(g.fecha))}${g.metodo?' · '+g.metodo:''}</div></div><div class="lm"><div class="lamt" style="color:var(--rust2)">${money(g.monto)}</div>${can('ver_gastos')?`<button onclick="eliminarGasto('${g.id}')" style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:.78rem">✕</button>`:''}</div></div>`).join(''):`<div class="empty" style="padding:12px"><div class="empty-t">Sin gastos</div></div>`}
       ${comprasMesPnl.length?`<div style="font-size:.72rem;font-weight:700;color:var(--ink3);margin:8px 0 4px">🛒 COMPRAS</div>`+comprasMesPnl.map(m=>`<div class="li"><div class="la bg-c">🛒</div><div class="lb"><div class="lt">${m.nombre}</div><div class="ls">${R(m.cant)} · ${new Date(m.fecha).toLocaleDateString('es')}</div></div><div class="lm"><div class="lamt" style="color:var(--rust2)">${money(m.costo)}</div></div></div>`).join(''):''}
     </div>`;
   } else if(tab==='productos'){
