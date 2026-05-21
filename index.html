@@ -80,6 +80,7 @@ body{font-family:'Segoe UI','Helvetica Neue',Arial,sans-serif;background:var(--p
 .sc-c{background:linear-gradient(135deg,var(--sage),#2d6040);color:#fff;}
 .sc-d{background:linear-gradient(135deg,var(--mauve),#5a2a50);color:#fff;}
 .sc-e{background:linear-gradient(135deg,var(--blue),var(--blue2));color:#fff;}
+.sc-rust{background:linear-gradient(135deg,rgba(192,48,42,.15),rgba(192,48,42,.08));border:1.5px solid rgba(192,48,42,.3);color:var(--danger);}
 .shd{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;}
 .shd h3{font-family:Georgia,serif;font-size:1rem;font-weight:600;color:var(--ink);}
 .btn-link{background:none;border:none;color:var(--amber);font-size:.75rem;cursor:pointer;font-weight:700;}
@@ -244,6 +245,7 @@ select.fc{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
         <div class="sc sc-b"><div class="sl">Por Cobrar</div><div class="sv" id="sv-cobrar">$0</div><div class="ss">saldo pendiente</div></div>
         <div class="sc sc-c"><div class="sl">Activos</div><div class="sv" id="sv-activos">0</div><div class="ss">en producción</div></div>
         <div class="sc sc-d"><div class="sl">Mes</div><div class="sv" id="sv-mes">$0</div><div class="ss">ingresos</div></div>
+        <div class="sc sc-rust"><div class="sl">Pend. Pagar</div><div class="sv" id="sv-cxp">$0</div><div class="ss">CxP pendiente</div></div>
       </div>
       <div class="shd"><h3>📋 Pedidos para HOY</h3><button class="btn-link" onclick="sv('pedidos')">Ver todos →</button></div>
       <div id="hoy-list"></div>
@@ -1219,7 +1221,8 @@ function renderInicio(){
   const vHoy=pagosHoy.reduce((s,p)=>s+N(p.monto),0);
   const vMes=pagosMes.reduce((s,p)=>s+N(p.monto),0);
   const cobrar=peds.filter(p=>p.estado!=='cancelado').reduce((s,p)=>s+N(p.restante),0);
-  document.getElementById('sv-hoy').textContent=money(vHoy);document.getElementById('sv-cobrar').textContent=money(cobrar);document.getElementById('sv-activos').textContent=activos;document.getElementById('sv-mes').textContent=money(vMes);
+  const cxpPend=(DB.cxp||[]).filter(x=>x.estado!=='pagada').reduce((s,x)=>s+N(x.saldo),0);
+  document.getElementById('sv-hoy').textContent=money(vHoy);document.getElementById('sv-cobrar').textContent=money(cobrar);document.getElementById('sv-activos').textContent=activos;document.getElementById('sv-mes').textContent=money(vMes);const cxpEl=document.getElementById('sv-cxp');if(cxpEl)cxpEl.textContent=money(cxpPend);
   const banner=document.getElementById('lic-banner-app');
   if(CFG.licFecha){let l=CFG.licFecha;if(typeof l==='number')l=new Date(Math.round((l-25569)*86400*1000)).toISOString().slice(0,10);else if(l&&String(l).includes('/')){const[d,m,y]=String(l).split('/');l=`${y}-${m}-${d}`;}const dias=Math.ceil((new Date(l)-new Date())/(1000*60*60*24));if(dias<=0)banner.innerHTML=`<div class="lic-banner"><span>⛔</span><div><b>Licencia vencida</b></div></div>`;else if(dias<=(CFG.licDias||7))banner.innerHTML=`<div class="lic-banner warn"><span>⚠️</span><div><b>Licencia vence en ${dias} día(s)</b></div></div>`;else banner.innerHTML='';}
   document.getElementById('hoy-list').innerHTML=pedHoy.length?pedHoy.map(todayCard).join(''):emptyHTML('🌸','Sin pedidos para hoy');
@@ -1503,50 +1506,69 @@ function imprimirVentasDia(){
   const pagosHoy=(DB.pagos||[]).filter(pg=>normFecha(pg.fecha)===h);
   const ventasHoy=(DB.ventas||[]).filter(v=>normFecha(v.fecha)===h);
   const pedidosHoy=PEDS_DB().map(p=>({...p,fecha:normFecha(p.fecha)})).filter(p=>p.fecha===h&&p.estado!=='cancelado');
-  const totalDia=pagosHoy.reduce((s,p)=>s+N(p.monto),0);
-  // Desglose solo por pagos para evitar duplicados
+  const pagosCxpHoy=pagosHoy.filter(p=>p.tipo==='cxp-pago');
+  const pagosIngreso=pagosHoy.filter(p=>p.tipo!=='cxp-pago'&&N(p.monto)>0);
+  const totalPagosPed=pagosIngreso.filter(p=>['anticipo','cobro','cxc-cobro'].includes(p.tipo)).reduce((s,p)=>s+N(p.monto),0);
+  const totalPagosCaja=pagosIngreso.filter(p=>p.tipo==='venta-caja').reduce((s,p)=>s+N(p.monto),0);
+  const totalIngresos=totalPagosPed+totalPagosCaja;
+  const totalCxpPagado=pagosCxpHoy.reduce((s,p)=>s+Math.abs(N(p.monto)),0);
+  // Gastos del día (solo los registrados como gasto — CxP marcados + manuales)
+  const gastosHoyTotal=(DB.gastos||[]).filter(g=>normFecha(g.fecha)===h).reduce((s,g)=>s+N(g.monto),0);
+  const cajaNeta=totalIngresos-gastosHoyTotal;
   const porMetodo={};
-  pagosHoy.forEach(p=>{const m=p.metodo||'Efectivo';porMetodo[m]=(porMetodo[m]||0)+N(p.monto);});
-  // Separar cobros de pedidos vs ventas de caja (informativo)
-  const totalPagosPed=pagosHoy.filter(p=>['anticipo','cobro','cxc-cobro'].includes(p.tipo)).reduce((s,p)=>s+N(p.monto),0);
-  const totalPagosCaja=pagosHoy.filter(p=>p.tipo==='venta-caja').reduce((s,p)=>s+N(p.monto),0);
-
-  const pedRows=pedidosHoy.map(p=>`
-    <tr><td style="padding:4px 7px">${p.cliente}</td><td style="padding:4px 7px">${p.descr}</td>
-    <td style="padding:4px 7px;text-align:right">${money(p.total)}</td>
-    <td style="padding:4px 7px;text-align:right;color:${N(p.restante)===0?'green':'#c00'}">${N(p.restante)===0?'✅ Pagado':'Debe '+money(p.restante)}</td></tr>`).join('');
-
-  const ventaRows=ventasHoy.map(v=>{
-    const items=Array.isArray(v.items)?v.items:(typeof v.items==='string'?JSON.parse(v.items||'[]'):[]);
-    return`<tr><td style="padding:4px 7px">Caja #${String(v.id).slice(-4)}</td>
-    <td style="padding:4px 7px">${items.map(i=>i.nombre+(i.cant>1?` ×${i.cant}`:'')).join(', ')}</td>
-    <td style="padding:4px 7px;text-align:right">${money(v.total)}</td><td style="padding:4px 7px;text-align:right;color:green">✅ ${v.metodo||'Efectivo'}</td></tr>`;
-  }).join('');
-
+  pagosIngreso.forEach(p=>{const m=p.metodo||'Efectivo';porMetodo[m]=(porMetodo[m]||0)+N(p.monto);});
+  const pedRows=pedidosHoy.map(p=>`<tr><td style="padding:4px 7px">${p.cliente}</td><td style="padding:4px 7px">${p.descr}</td><td style="padding:4px 7px;text-align:right">${money(p.total)}</td><td style="padding:4px 7px;text-align:right;color:${N(p.restante)===0?'green':'#c00'}">${N(p.restante)===0?'✅ Pagado':'Debe '+money(p.restante)}</td></tr>`).join('');
+  const ventaRows=ventasHoy.map(v=>{const items=Array.isArray(v.items)?v.items:(typeof v.items==='string'?JSON.parse(v.items||'[]'):[]);return`<tr><td style="padding:4px 7px">Caja #${String(v.id).slice(-4)}</td><td style="padding:4px 7px">${items.map(i=>i.nombre+(i.cant>1?` ×${i.cant}`:'')).join(', ')}</td><td style="padding:4px 7px;text-align:right">${money(v.total)}</td><td style="padding:4px 7px;text-align:right;color:green">✅ ${v.metodo||'Efectivo'}</td></tr>`;}).join('');
+  const cxpRows=pagosCxpHoy.map(p=>`<tr><td style="padding:4px 7px">${p.cliente||'—'}</td><td style="padding:4px 7px">${(DB.cxp||[]).find(x=>String(x.id)===String(p.pedidoId))?.concepto||'Pago a proveedor'}</td><td style="padding:4px 7px;text-align:right;color:#c0302a;font-weight:700">-${money(Math.abs(N(p.monto)))}</td><td style="padding:4px 7px;text-align:right">${p.metodo||'Efectivo'}</td></tr>`).join('');
+  const cols=totalCxpPagado>0?4:3;
   const html=`<div style="font-family:Arial,sans-serif;padding:20px 24px;color:#111;max-width:800px;margin:auto">
     <div style="text-align:center;margin-bottom:16px;border-bottom:2px solid #333;padding-bottom:10px">
       <div style="font-size:1.4rem;font-weight:700">${CFG.nombre||'DulceGestión'}</div>
-      <div style="font-size:1rem;font-weight:700;margin-top:4px">📋 REPORTE DE VENTAS DEL DÍA</div>
+      <div style="font-size:1rem;font-weight:700;margin-top:4px">📋 REPORTE DE CIERRE DE CAJA</div>
       <div style="font-size:.85rem;color:#555">${fDate(h)}</div>
     </div>
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px">
+    <div style="display:grid;grid-template-columns:repeat(${cols},1fr);gap:8px;margin-bottom:16px">
       <div style="border:1px solid #ddd;border-radius:8px;padding:10px;text-align:center">
-        <div style="font-size:.7rem;font-weight:700;color:#888">COBROS PEDIDOS</div>
-        <div style="font-size:1.3rem;font-weight:700;color:#c97c1e">${money(totalPagosPed)}</div>
+        <div style="font-size:.65rem;font-weight:700;color:#888">COBROS PEDIDOS</div>
+        <div style="font-size:1.2rem;font-weight:700;color:#c97c1e">${money(totalPagosPed)}</div>
       </div>
       <div style="border:1px solid #ddd;border-radius:8px;padding:10px;text-align:center">
-        <div style="font-size:.7rem;font-weight:700;color:#888">VENTAS CAJA</div>
-        <div style="font-size:1.3rem;font-weight:700;color:#4a7c5a">${money(totalPagosCaja)}</div>
+        <div style="font-size:.65rem;font-weight:700;color:#888">VENTAS CAJA</div>
+        <div style="font-size:1.2rem;font-weight:700;color:#4a7c5a">${money(totalPagosCaja)}</div>
       </div>
-      <div style="border:1px solid #ddd;border-radius:8px;padding:10px;text-align:center;background:#1c0f00">
-        <div style="font-size:.7rem;font-weight:700;color:#f5c878">TOTAL DEL DÍA</div>
-        <div style="font-size:1.3rem;font-weight:700;color:#f5c878">${money(totalDia)}</div>
+      ${totalCxpPagado>0?`<div style="border:1px solid #f5c6c6;border-radius:8px;padding:10px;text-align:center;background:#fff5f5"><div style="font-size:.65rem;font-weight:700;color:#c0302a">PAGOS PROVEEDORES</div><div style="font-size:1.2rem;font-weight:700;color:#c0302a">-${money(totalCxpPagado)}</div></div>`:''}
+      <div style="border-radius:8px;padding:10px;text-align:center;background:#1c0f00">
+        <div style="font-size:.65rem;font-weight:700;color:#f5c878">CAJA NETA</div>
+        <div style="font-size:1.2rem;font-weight:700;color:#f5c878">${money(cajaNeta)}</div>
       </div>
     </div>
-    ${Object.keys(porMetodo).length?`<div style="margin-bottom:14px"><div style="font-weight:700;margin-bottom:5px;font-size:.9rem">💳 Por método de pago</div>
-    <table style="width:100%;border-collapse:collapse;font-size:.85rem">
+    ${Object.keys(porMetodo).length?`<div style="margin-bottom:14px"><div style="font-weight:700;margin-bottom:5px;font-size:.9rem">💳 Ingresos por método de pago</div>
+    <table style="width:100%;border-collapse:collapse;font-size:.85rem"><tbody>
     ${Object.entries(porMetodo).map(([m,v])=>`<tr><td style="padding:3px 7px;border-bottom:1px solid #eee">${m}</td><td style="padding:3px 7px;border-bottom:1px solid #eee;text-align:right;font-weight:700">${money(v)}</td></tr>`).join('')}
-    </table></div>`:''}
+    <tr style="background:#f9f9f9"><td style="padding:5px 7px;font-weight:700">TOTAL INGRESOS</td><td style="padding:5px 7px;text-align:right;font-weight:700">${money(totalIngresos)}</td></tr>
+    </tbody></table></div>`:''}
+    <div style="margin-bottom:14px;background:linear-gradient(135deg,#1c0f00,#2d1a00);border-radius:12px;padding:14px 16px;color:#f5e6c8">
+      <div style="font-weight:700;font-size:.88rem;margin-bottom:10px;letter-spacing:.03em">📊 NETO EN CAJA POR MÉTODO DE PAGO</div>
+      ${['Efectivo','Transferencia','Tarjeta'].map(met=>{
+        const ingMet=(pagosIngreso||[]).filter(p=>(p.metodo||'Efectivo')===met).reduce((s,p)=>s+N(p.monto),0);
+        // Restar solo gastos del día del mismo método (CxP registrados como gasto + gastos manuales)
+        const gastosHoy=(DB.gastos||[]).filter(g=>normFecha(g.fecha)===h&&(g.metodo||'Efectivo')===met);
+        const egresosMet=gastosHoy.reduce((s,g)=>s+N(g.monto),0);
+        const neto=ingMet-egresosMet;
+        if(ingMet===0&&egresosMet===0)return'';
+        const icon=met==='Efectivo'?'💵':met==='Transferencia'?'🏦':'💳';
+        return`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.1)">
+          <div><div style="font-size:.8rem;font-weight:700">${icon} ${met==='Transferencia'?'Transferencias a Ctas.':met==='Tarjeta'?'Ingresos x Tarjeta':'Efectivo en Caja'}</div>
+          ${egresosMet>0?`<div style="font-size:.68rem;color:#f5c878;opacity:.8">Ingresos: ${money(ingMet)} − Gastos: ${money(egresosMet)}</div>`:''}
+          </div>
+          <div style="font-size:1.05rem;font-weight:700;color:${neto>=0?'#7fff9a':'#ff9090'}">${money(neto)}</div>
+        </div>`;
+      }).join('')}
+      <div style="display:flex;justify-content:space-between;align-items:center;padding-top:8px;margin-top:4px">
+        <div style="font-size:.85rem;font-weight:700">CAJA NETA TOTAL</div>
+        <div style="font-size:1.2rem;font-weight:700;color:#f5c878">${money(cajaNeta)}</div>
+      </div>
+    </div>
     ${pedidosHoy.length?`<div style="margin-bottom:14px"><div style="font-weight:700;margin-bottom:5px;font-size:.9rem">📦 Pedidos del día (${pedidosHoy.length})</div>
     <table style="width:100%;border-collapse:collapse;font-size:.82rem">
     <thead><tr style="background:#f5f5f5"><th style="padding:5px 7px;text-align:left">Cliente</th><th style="padding:5px 7px;text-align:left">Producto</th><th style="padding:5px 7px;text-align:right">Total</th><th style="padding:5px 7px;text-align:right">Estado pago</th></tr></thead>
@@ -1555,13 +1577,16 @@ function imprimirVentasDia(){
     <table style="width:100%;border-collapse:collapse;font-size:.82rem">
     <thead><tr style="background:#f5f5f5"><th style="padding:5px 7px;text-align:left">#</th><th style="padding:5px 7px;text-align:left">Productos</th><th style="padding:5px 7px;text-align:right">Total</th><th style="padding:5px 7px;text-align:right">Método</th></tr></thead>
     <tbody>${ventaRows}</tbody></table></div>`:''}
-    ${!pedidosHoy.length&&!ventasHoy.length?'<div style="text-align:center;color:#888;padding:20px">Sin ventas registradas hoy</div>':''}
-    <div style="text-align:center;font-size:.75rem;color:#888;margin-top:20px;border-top:1px solid #ccc;padding-top:8px">
-      Generado el ${new Date().toLocaleDateString('es')} a las ${new Date().toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit'})} — ${CFG.nombre||'DulceGestión'}
-    </div>
+    ${pagosCxpHoy.length?`<div style="margin-bottom:14px"><div style="font-weight:700;margin-bottom:5px;font-size:.9rem;color:#c0302a">💳 Pagos a proveedores (${pagosCxpHoy.length})</div>
+    <table style="width:100%;border-collapse:collapse;font-size:.82rem">
+    <thead><tr style="background:#fff0f0"><th style="padding:5px 7px;text-align:left">Proveedor</th><th style="padding:5px 7px;text-align:left">Concepto</th><th style="padding:5px 7px;text-align:right">Monto</th><th style="padding:5px 7px;text-align:right">Método</th></tr></thead>
+    <tbody>${cxpRows}</tbody></table></div>`:''}
+    ${!pedidosHoy.length&&!ventasHoy.length&&!pagosCxpHoy.length?'<div style="text-align:center;color:#888;padding:20px">Sin movimientos registrados hoy</div>':''}
+    <div style="text-align:center;font-size:.75rem;color:#888;margin-top:20px;border-top:1px solid #ccc;padding-top:8px">Generado el ${new Date().toLocaleDateString('es')} a las ${new Date().toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit'})} — ${CFG.nombre||'DulceGestión'}</div>
   </div>`;
   const pf=document.getElementById('pf');pf.innerHTML=html;pf.style.display='block';window.print();setTimeout(()=>{pf.style.display='none';},1000);
 }
+
 
 /* ═══════════════════════════════════════
    REPORTES
@@ -1579,8 +1604,8 @@ function renderRep(tab){
     const l6=[];for(let i=5;i>=0;i--){const d=new Date();d.setDate(1);d.setMonth(d.getMonth()-i);const mStr=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;const lbl=d.toLocaleDateString('es',{month:'short',year:'2-digit'});const mP=(DB.pagos||[]).filter(pg=>{const f=normFecha(pg.fecha);return f&&f.startsWith(mStr);}).reduce((s,pg)=>s+N(pg.monto),0);l6.push({lbl,mStr,total:mP});}const mx6=Math.max(...l6.map(m=>m.total),1);
     const today7=today();const dias=[];for(let i=6;i>=0;i--){const d=new Date(Date.now()-i*86400000);const k=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;const lbl=d.toLocaleDateString('es',{day:'2-digit',month:'2-digit'});const t=(DB.pagos||[]).filter(pg=>normFecha(pg.fecha)===k).reduce((s,pg)=>s+N(pg.monto),0);dias.push({lbl,t});}const mx=Math.max(...dias.map(d=>d.t),1);
     const pagosMes=(DB.pagos||[]).filter(pg=>{const f=normFecha(pg.fecha);return f&&f.startsWith(filtMes);});
-    const cobradoMes=pagosMes.reduce((s,pg)=>s+N(pg.monto),0);const pedidosMes=PEDS_DB().filter(p=>{const f=normFecha(p.fecha);return f.startsWith(filtMes)&&p.estado!=='cancelado';}).length;const porCobrar=PEDS_DB().filter(p=>p.estado!=='cancelado').reduce((s,p)=>s+N(p.restante),0);const cobradoTotal=(DB.pagos||[]).reduce((s,pg)=>s+N(pg.monto),0);const mesLbl=new Date(filtMes+'-02').toLocaleDateString('es',{month:'long',year:'numeric'});
-    cont.innerHTML=`<div class="sg"><div class="sc sc-a"><div class="sl">Cobrado</div><div class="sv">${money(cobradoMes)}</div><div class="ss">${mesLbl.split(' ')[0]}</div></div><div class="sc sc-c"><div class="sl">Pedidos</div><div class="sv">${pedidosMes}</div><div class="ss">del mes</div></div><div class="sc sc-e"><div class="sl">Total Cobrado</div><div class="sv">${money(cobradoTotal)}</div><div class="ss">histórico</div></div><div class="sc sc-b"><div class="sl">Por Cobrar</div><div class="sv">${money(porCobrar)}</div><div class="ss">pendiente</div></div></div>
+    const cobradoMes=pagosMes.filter(pg=>pg.tipo!=='cxp-pago'&&N(pg.monto)>0).reduce((s,pg)=>s+N(pg.monto),0);const pedidosMes=PEDS_DB().filter(p=>{const f=normFecha(p.fecha);return f.startsWith(filtMes)&&p.estado!=='cancelado';}).length;const porCobrar=PEDS_DB().filter(p=>p.estado!=='cancelado').reduce((s,p)=>s+N(p.restante),0);const cobradoTotal=(DB.pagos||[]).filter(pg=>pg.tipo!=='cxp-pago'&&N(pg.monto)>0).reduce((s,pg)=>s+N(pg.monto),0);const cxpPendRep=(DB.cxp||[]).filter(x=>x.estado!=='pagada').reduce((s,x)=>s+N(x.saldo),0);const mesLbl=new Date(filtMes+'-02').toLocaleDateString('es',{month:'long',year:'numeric'});
+    cont.innerHTML=`<div class="sg"><div class="sc sc-a"><div class="sl">Cobrado</div><div class="sv">${money(cobradoMes)}</div><div class="ss">${mesLbl.split(' ')[0]}</div></div><div class="sc sc-c"><div class="sl">Pedidos</div><div class="sv">${pedidosMes}</div><div class="ss">del mes</div></div><div class="sc sc-e"><div class="sl">Total Cobrado</div><div class="sv">${money(cobradoTotal)}</div><div class="ss">histórico</div></div><div class="sc sc-b"><div class="sl">Por Cobrar</div><div class="sv">${money(porCobrar)}</div><div class="ss">pendiente</div></div><div class="sc sc-rust"><div class="sl">Pend. Pagar</div><div class="sv">${money(cxpPendRep)}</div><div class="ss">CxP pendiente</div></div></div>
     <div class="card"><div class="card-hd">📈 Últimos 7 días</div><div class="cbar-wrap">${dias.map(d=>`<div class="cbar-row"><div class="cbar-label">${d.lbl}</div><div class="cbar-bg"><div class="cbar-fill" style="width:${Math.round(d.t/mx*100)}%;background:var(--amber)"></div></div><div class="cbar-val">${money(d.t)}</div></div>`).join('')}</div></div>
     <div class="card"><div class="card-hd">📊 Últimos 6 meses</div><div class="cbar-wrap">${l6.map(m=>`<div class="cbar-row"><div class="cbar-label" style="font-size:.62rem">${m.lbl}</div><div class="cbar-bg"><div class="cbar-fill" style="width:${Math.round(m.total/mx6*100)}%;background:${m.mStr===filtMes?'var(--amber)':'var(--blue2)'}"></div></div><div class="cbar-val" style="font-size:.65rem">${money(m.total)}</div></div>`).join('')}</div></div>
     <div class="card"><div class="card-hd">📋 Cobros — ${mesLbl}</div>${pagosMes.length?pagosMes.map(pg=>`<div class="li"><div class="la bg-c">💰</div><div class="lb"><div class="lt">${pg.cliente||'—'}</div><div class="ls">${pg.tipo} · ${fDate(pg.fecha)} · ${pg.metodo||'—'}</div></div><div class="lm"><div class="lamt">${money(pg.monto)}</div></div></div>`).join(''):`<div class="empty" style="padding:12px"><div class="empty-t">Sin cobros</div></div>`}</div>`;
@@ -1920,50 +1945,60 @@ function calcCXSaldo(){const m=N(document.getElementById('cx-monto')?.value),a=N
 function saveCX(){const tercero=document.getElementById('cx-tercero')?.value.trim(),concepto=document.getElementById('cx-concepto')?.value.trim(),monto=N(document.getElementById('cx-monto')?.value);if(!tercero||!concepto||!monto){toast('❌ Completa los campos requeridos');return;}const mod=document.getElementById('cx-mod')?.value||'cxp';const abonado=N(document.getElementById('cx-abonado')?.value)||0;const saldo=Math.max(0,monto-abonado);const estado=saldo<=0?'pagada':abonado>0?'parcial':'pendiente';const eid=document.getElementById('cx-edit-id')?.value;const vencVal=document.getElementById('cx-venc')?.value;const data={tercero,concepto,monto,abonado,saldo,estado,fecha:document.getElementById('cx-fecha')?.value||today(),vencimiento:vencVal||null,notas:document.getElementById('cx-notas')?.value||'',updated:new Date().toISOString()};if(eid){const x=(DB[mod]||[]).find(i=>String(i.id)===eid);if(x){Object.assign(x,data);syncRow(mod,'update',x,x.id);}}else{const x={id:uid(),...data,created:new Date().toISOString()};if(!DB[mod])DB[mod]=[];DB[mod].push(x);syncRow(mod,'write',x,x.id);}const b=document.getElementById('cobro-confirm-btn');if(b){b.style.display='';b.onclick=confirmCobro;}cm('mo-cobro');toast('✅ Cuenta guardada');renderV(CUR);}
 function abonarCX(id,mod){
   const x=(DB[mod]||[]).find(i=>String(i.id)===String(id));if(!x)return;
-  const label=mod==='cxp'?'pagar':'abonar';
-  const montoProm=prompt(`Monto a ${label} (saldo pendiente: ${money(x.saldo)}):`);
-  if(!montoProm||isNaN(N(montoProm))||N(montoProm)<=0)return;
-  const monto=N(montoProm);
-  if(monto>N(x.saldo)){
-    toast(`❌ El monto (${money(monto)}) supera el saldo pendiente (${money(x.saldo)})`);
-    return;
-  }
-  const saldoAntes=x.saldo;
+  const cont=document.getElementById('cobro-content');
+  const orig=cont.innerHTML;
+  cont.innerHTML=`<div style="font-size:.9rem;font-weight:700;color:var(--amber);margin-bottom:12px">${mod==='cxp'?'💵 Registrar Pago a Proveedor':'💵 Registrar Cobro'}</div>
+  <div style="background:var(--paper2);border-radius:10px;padding:12px;margin-bottom:12px;font-size:.83rem"><b>${x.tercero}</b> — ${x.concepto}<br><span style="color:var(--amber);font-weight:700">Saldo pendiente: ${money(x.saldo)}</span></div>
+  <div class="fg"><label class="fl">Monto *</label><input class="fc" id="cx-abono-monto" type="number" step="0.01" placeholder="0.00"></div>
+  <div class="fg"><label class="fl">Método de ${mod==='cxp'?'pago':'cobro'} *</label>
+    <select class="fc" id="cx-abono-metodo">
+      <option value="Efectivo">💵 Efectivo</option>
+      <option value="Transferencia">🏦 Transferencia</option>
+      <option value="Tarjeta">💳 Tarjeta</option>
+    </select>
+  </div>
+  ${mod==='cxp'?`<div class="fg" style="margin-top:4px"><label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:.84rem"><input type="checkbox" id="cx-abono-gasto" style="width:16px;height:16px"> Registrar también como gasto (afecta Estado de Resultados)</label></div>`:''}
+  <div style="display:flex;gap:8px;margin-top:14px">
+    <button class="btn btn-amber" id="cx-abono-btn">✅ Confirmar</button>
+    <button class="btn btn-ghost" id="cx-abono-cancel">✕ Cancelar</button>
+  </div>`;
+  document.getElementById('cx-abono-cancel').onclick=()=>{cont.innerHTML=orig;};
+  document.getElementById('cx-abono-btn').onclick=()=>confirmarAbonoModal(id,mod);
+}
+
+function confirmarAbonoModal(id,mod){
+  const x=(DB[mod]||[]).find(i=>String(i.id)===String(id));if(!x)return;
+  const monto=N(document.getElementById('cx-abono-monto')?.value);
+  if(!monto||monto<=0){toast('❌ Ingresa un monto válido');return;}
+  if(monto>N(x.saldo)){toast(`❌ El monto supera el saldo pendiente (${money(x.saldo)})`);return;}
+  const metodo=document.getElementById('cx-abono-metodo')?.value||'Efectivo';
+  const registrarGasto=mod==='cxp'&&(document.getElementById('cx-abono-gasto')?.checked||false);
   x.abonado=(N(x.abonado)||0)+monto;
   x.saldo=Math.max(0,N(x.monto)-x.abonado);
   x.estado=x.saldo<=0?'pagada':x.abonado>0?'parcial':'pendiente';
   x.updated=new Date().toISOString();
   syncRow(mod,'update',x,x.id);
-
   if(mod==='cxp'){
-    // CxP: registrar como EGRESO en pagos (monto negativo) para no afectar ingresos
-    const pg={id:uid(),pedidoId:null,cliente:x.tercero,monto:-Math.abs(monto),tipo:'cxp-pago',fecha:today(),metodo:'CxP',created:new Date().toISOString()};
+    const pg={id:uid(),pedidoId:null,cliente:x.tercero,monto:-Math.abs(monto),tipo:'cxp-pago',fecha:today(),metodo,created:new Date().toISOString()};
     DB.pagos.push(pg);syncRow('pagos','write',pg,pg.id);
-    // Ofrecer registrar como gasto
-    if(confirm(`¿Registrar este pago de ${money(monto)} como gasto en el Estado de Resultados?`)){
-      const g={id:uid(),concepto:x.concepto||`Pago a ${x.tercero}`,monto,cat:'CxP',fecha:today(),notas:`Pago CxP — ${x.tercero}`,created:new Date().toISOString()};
+    if(registrarGasto){
+      const g={id:uid(),concepto:x.concepto||`Pago a ${x.tercero}`,monto,cat:'CxP',fecha:today(),metodo,notas:`Pago CxP — ${x.tercero}`,created:new Date().toISOString()};
       DB.gastos.push(g);syncRow('gastos','write',g,g.id);
-      toast(`✅ Pago registrado y guardado como gasto`);
+      toast(`✅ Pago (${metodo}) registrado como gasto`);
     }else{
-      toast(`✅ Pago registrado — saldo: ${money(x.saldo)}`);
+      toast(`✅ Pago de ${money(monto)} en ${metodo} — saldo: ${money(x.saldo)}`);
     }
   }else{
-    // CxC: registrar como ingreso normal
-    const pg={id:uid(),pedidoId:x.pedidoId||id,cliente:x.tercero,monto,tipo:'cxc-cobro',fecha:today(),metodo:'CxC',created:new Date().toISOString()};
+    const pg={id:uid(),pedidoId:x.pedidoId||id,cliente:x.tercero,monto,tipo:'cxc-cobro',fecha:today(),metodo,created:new Date().toISOString()};
     DB.pagos.push(pg);syncRow('pagos','write',pg,pg.id);
     if(x.pedidoId){
       const p=PEDS_DB().find(px=>String(px.id)===String(x.pedidoId));
-      if(p){
-        const saldoPed=Math.max(0,N(p.restante)-monto);
-        p.restante=saldoPed;if(p.restante===0)p.pagado=true;
-        p.updated=new Date().toISOString();
-        syncRow('pedidos','update',p,p.id);
-        if(can('imprimir')&&confirm('¿Imprimir recibo de cobro?'))generarReciboCobro(p.id,monto,'CxC',saldoPed);
-      }
+      if(p){const saldoPed=Math.max(0,N(p.restante)-monto);p.restante=saldoPed;if(p.restante===0)p.pagado=true;p.updated=new Date().toISOString();syncRow('pedidos','update',p,p.id);if(can('imprimir')&&confirm('¿Imprimir recibo?'))generarReciboCobro(p.id,monto,metodo,saldoPed);}
     }
-    toast(`✅ Abono registrado — saldo: ${money(x.saldo)}`);
+    toast(`✅ Cobro de ${money(monto)} en ${metodo} — saldo: ${money(x.saldo)}`);
   }
-  renderV(CUR);
+  const b=document.getElementById('cobro-confirm-btn');if(b){b.style.display='';b.onclick=confirmCobro;}
+  cm('mo-cobro');renderV(CUR);
 }
 
 /* ═══════════════════════════════════════
