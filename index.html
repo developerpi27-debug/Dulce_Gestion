@@ -1339,6 +1339,29 @@ function openListo(id){
 function confirmListo(){
   const p=PEDS_DB().find(x=>x.id==listoId);if(!p)return;
   const ic=Array.isArray(p.ingsCalc)?p.ingsCalc:(typeof p.ingsCalc==='string'?JSON.parse(p.ingsCalc||'[]'):[]);
+  // ── Validación de stock ──────────────────────────────────────
+  const faltantes=[];
+  ic.forEach((u,i)=>{
+    const el=document.getElementById(`lc-${i}`);
+    const cant=el?N(el.value):u.cant;
+    const ing=ING().find(x=>x.id==u.iid);
+    if(!ing||!cant)return;
+    if(ing.cant<cant)faltantes.push(`• ${ing.nombre}: necesita ${R(cant)} ${ing.unidad}, disponible ${R(ing.cant)} ${ing.unidad}`);
+  });
+  for(let n=0;n<listoExtCnt;n++){
+    const row=document.getElementById(`le-row-${n}`);if(!row)continue;
+    const ce=document.getElementById(`le-c-${n}`);if(!ce)continue;
+    const cant=N(ce.value);if(!cant)continue;
+    const iid=row.dataset.iid?parseInt(row.dataset.iid):0;if(!iid)continue;
+    const ing=ING().find(i=>i.id==iid);if(!ing)continue;
+    if(ing.cant<cant)faltantes.push(`• ${ing.nombre} (extra): necesita ${R(cant)} ${ing.unidad}, disponible ${R(ing.cant)} ${ing.unidad}`);
+  }
+  if(faltantes.length>0){
+    toast('❌ Stock insuficiente — no se puede marcar como listo');
+    alert('⚠️ No hay suficiente inventario para completar este pedido:\n\n'+faltantes.join('\n')+'\n\nActualiza el inventario antes de continuar.');
+    return;
+  }
+  // ── Descontar inventario ─────────────────────────────────────
   const usados=[],movs=[];
   ic.forEach((u,i)=>{const el=document.getElementById(`lc-${i}`);const cant=el?N(el.value):u.cant;const ing=ING().find(x=>x.id==u.iid);if(!ing||!cant)return;ing.cant=Math.max(0,ing.cant-cant);usados.push({iid:ing.id,cant,tipo:'receta'});movs.push({id:uid(),tipo:'salida',nombre:ing.nombre,cant,costo:0,notas:`Receta #${p.id}`,fecha:localISODate(),ref:String(p.id)});syncRow('inventario','update',ing,ing.id);});
   const extras=[];
@@ -1364,7 +1387,10 @@ function confirmCobro(){if(cobroMode==='venta'){confirmarCobroVenta();return;}co
 ═══════════════════════════════════════ */
 let ecCnt=0;
 function resetPedForm(){ecCnt=0;['f-cli','f-tel','f-desc','f-total','f-anticipo','f-rest','f-notas'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});document.getElementById('f-qty').value='1';document.getElementById('f-fecha').value=today();document.getElementById('f-hora').value='10:00';document.getElementById('f-estado').value='pendiente';document.getElementById('f-rec').value='';document.getElementById('f-edit-id').value='';const amEl=document.getElementById('f-ant-metodo');if(amEl)amEl.value='Efectivo';document.getElementById('rec-prev').style.display='none';document.getElementById('extra-create-wrap').innerHTML='';const bd=document.getElementById('f-price-breakdown');if(bd)bd.style.display='none';document.getElementById('ped-titulo').textContent='Nuevo Pedido';fillRecSel();}
-function fillRecSel(){const sel=document.getElementById('f-rec');sel.innerHTML='<option value="">— Sin vincular —</option>';PRODS_DB().forEach(p=>sel.innerHTML+=`<option value="${p.id}">${p.nombre} — ${money(p.precio)}</option>`);}
+function ING_ASC(){return[...ING()].sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''));}
+function INGS_SOLO_ASC(){return ING_ASC().filter(i=>!i.tipo||i.tipo==='ingrediente'||i.tipo==='');}
+function PRODS_ASC(){return[...PRODS_DB()].sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''));}
+function fillRecSel(){const sel=document.getElementById('f-rec');sel.innerHTML='<option value="">— Sin vincular —</option>';PRODS_ASC().forEach(p=>sel.innerHTML+=`<option value="${p.id}">${p.nombre} — ${money(p.precio)}</option>`);}
 function onRecSel(){const id=parseInt(document.getElementById('f-rec').value);const prev=document.getElementById('rec-prev');if(!id){prev.style.display='none';return;}const prod=PRODS_DB().find(p=>p.id==id);if(!prod){prev.style.display='none';return;}if(!document.getElementById('f-desc').value)document.getElementById('f-desc').value=prod.nombre;recalcTotal();showRecPrev(prod,parseInt(document.getElementById('f-qty').value)||1);}
 function onQtyChange(){recalcTotal();const id=parseInt(document.getElementById('f-rec').value);if(!id)return;const prod=PRODS_DB().find(p=>p.id==id);if(prod)showRecPrev(prod,parseInt(document.getElementById('f-qty').value)||1);}
 function recalcTotal(){const recId=parseInt(document.getElementById('f-rec').value)||0,qty=parseInt(document.getElementById('f-qty').value)||1;const prod=recId?PRODS_DB().find(p=>p.id==recId):null;let base=prod?N(prod.precio)*qty:N(document.getElementById('f-total').value);let costoExtras=0;const extrasDetalle=[];for(let n=0;n<ecCnt;n++){const ie=document.getElementById(`ec-i-${n}`);const ce=document.getElementById(`ec-c-${n}`);if(!ie||!ce)continue;const cant=N(ce.value);if(!cant)continue;const ing=ING().find(i=>i.id==ie.value);if(ing){const pv=N(ing.precioVenta)>0?N(ing.precioVenta):N(ing.costo)||0;const ce2=pv*cant;costoExtras+=ce2;if(pv>0)extrasDetalle.push(`${ing.nombre} × ${R(cant)} = ${money(ce2)}`);}}const total=base+costoExtras;if(prod||costoExtras>0)document.getElementById('f-total').value=total.toFixed(2);const bd=document.getElementById('f-price-breakdown');if(bd){if((prod&&qty>1)||costoExtras>0){let lines=[];if(prod)lines.push(`${qty} × ${prod.nombre} = ${money(base)}`);extrasDetalle.forEach(e=>lines.push(`Extra: ${e}`));if(costoExtras>0)lines.push(`<b>Total: ${money(total)}</b>`);bd.innerHTML=lines.join('<br>');bd.style.display='block';}else bd.style.display='none';}calcRest();}
@@ -1381,7 +1407,7 @@ function savePed(){const cli=document.getElementById('f-cli').value.trim(),descr
         const er={id:'ext_'+p.id,pedido_id:p.id,extras,created:new Date().toISOString()};
         const existingEr=DB.extras_pedidos.find(e=>e.id==='ext_'+p.id||e.pedidoId==p.id||e.pedido_id==p.id);
         if(existingEr){Object.assign(existingEr,er);syncRow('extras_pedidos','upsert',er,er.id);}
-        else{DB.extras_pedidos.push(er);syncRow('extras_pedidos','write',er,er.id);}
+        else{DB.extras_pedidos.push(er);syncRow('extras_pedidos','upsert',er,er.id);}
       }
     }
   }else{
@@ -1390,10 +1416,36 @@ function savePed(){const cli=document.getElementById('f-cli').value.trim(),descr
     if(extras.length>0){const er={id:'ext_'+p.id,pedido_id:p.id,extras,created:new Date().toISOString()};const existingEr=DB.extras_pedidos.find(e=>e.id==='ext_'+p.id||String(e.pedido_id)===String(p.id));if(existingEr){Object.assign(existingEr,er);syncRow('extras_pedidos','upsert',er,er.id);}else{DB.extras_pedidos.push(er);syncRow('extras_pedidos','upsert',er,er.id);}}
     if(ant>0){const antMetodo=document.getElementById('f-ant-metodo')?.value||'Efectivo';const pg={id:uid(),pedidoId:p.id,cliente:p.cliente,monto:ant,tipo:'anticipo',fecha:today(),metodo:antMetodo,created:new Date().toISOString()};DB.pagos.push(pg);syncRow('pagos','write',pg,pg.id);}
   }cm('mo-ped');toast('✅ Pedido guardado');resetPedForm();renderV(CUR);}
-function openEditPed(id){const p=PEDS_DB().find(x=>x.id==id);if(!p)return;resetPedForm();cm('mo-ver');document.getElementById('ped-titulo').textContent='Editar Pedido';document.getElementById('f-edit-id').value=id;document.getElementById('f-cli').value=p.cliente;document.getElementById('f-tel').value=p.telefono||'';document.getElementById('f-desc').value=p.descr;document.getElementById('f-qty').value=p.qty;document.getElementById('f-total').value=p.total;document.getElementById('f-anticipo').value=p.anticipo;document.getElementById('f-rest').value=money(p.restante);document.getElementById('f-fecha').value=p.fecha;document.getElementById('f-hora').value=p.hora;document.getElementById('f-notas').value=p.notas||'';document.getElementById('f-estado').value=p.estado;if(p.recId){document.getElementById('f-rec').value=p.recId;onRecSel();}om('mo-ped');}
-function addExtraRow(wrapId,prefix){const wrap=document.getElementById(wrapId);const n=prefix==='le'?listoExtCnt++:prefix==='ee'?entExtCnt++:ecCnt++;const div=document.createElement('div');div.id=`${prefix}-row-${n}`;div.style.cssText='display:grid;grid-template-columns:1fr 68px 46px 28px;gap:5px;align-items:center;margin-bottom:5px;';const isCreate=(prefix==='ec');
-  // Solo mostrar ingredientes (excluir productos de inventario)
-  const ingsSolo=ING().filter(i=>!i.tipo||i.tipo==='ingrediente'||i.tipo==='');
+function openEditPed(id){
+  const p=PEDS_DB().find(x=>x.id==id);if(!p)return;
+  resetPedForm();cm('mo-ver');
+  document.getElementById('ped-titulo').textContent='Editar Pedido';
+  document.getElementById('f-edit-id').value=id;
+  document.getElementById('f-cli').value=p.cliente;
+  document.getElementById('f-tel').value=p.telefono||'';
+  document.getElementById('f-desc').value=p.descr;
+  document.getElementById('f-qty').value=p.qty;
+  document.getElementById('f-total').value=p.total;
+  document.getElementById('f-anticipo').value=p.anticipo;
+  document.getElementById('f-rest').value=money(p.restante);
+  document.getElementById('f-fecha').value=p.fecha;
+  document.getElementById('f-hora').value=p.hora;
+  document.getElementById('f-notas').value=p.notas||'';
+  document.getElementById('f-estado').value=p.estado;
+  if(p.recId){document.getElementById('f-rec').value=p.recId;onRecSel();}
+  // Cargar extras del pedido
+  const extrasGuardados=pa(p.extrasCreate);
+  if(!extrasGuardados.length){
+    const er=DB.extras_pedidos.find(e=>String(e.pedidoId||e.pedido_id)===String(id));
+    if(er&&er.extras){try{const ext=typeof er.extras==='string'?JSON.parse(er.extras):er.extras;ext.forEach(u=>addExtraRow('extra-create-wrap','ec',u.iid,u.cant));}catch{}}
+  }else{
+    extrasGuardados.forEach(u=>addExtraRow('extra-create-wrap','ec',u.iid,u.cant));
+  }
+  om('mo-ped');
+}
+function addExtraRow(wrapId,prefix,preIid,preCant){const wrap=document.getElementById(wrapId);const n=prefix==='le'?listoExtCnt++:prefix==='ee'?entExtCnt++:ecCnt++;const div=document.createElement('div');div.id=`${prefix}-row-${n}`;div.style.cssText='display:grid;grid-template-columns:1fr 68px 46px 28px;gap:5px;align-items:center;margin-bottom:5px;';const isCreate=(prefix==='ec');
+  // Solo mostrar ingredientes ordenados ASC
+  const ingsSolo=INGS_SOLO_ASC();
   div.innerHTML=`<select id="${prefix}-i-${n}" style="padding:6px 7px;border:1.5px solid var(--border2);border-radius:8px;font-size:.75rem;background:var(--paper2);color:var(--ink);outline:none;">${ingsSolo.map(i=>{const pv=+(i.precioVenta||0)||+(i.costo||0)||0;return`<option value="${i.id}">${i.nombre}${pv?` — $${pv}/${i.unidad}`:''}</option>`;}).join('')}</select><input type="number" step="0.001" id="${prefix}-c-${n}" placeholder="cant" style="padding:6px 8px;border:1.5px solid var(--border2);border-radius:8px;font-size:.8rem;background:var(--paper2);outline:none;" ${isCreate?`oninput="recalcTotal()"`:''}>
   <div id="${prefix}-u-${n}" style="font-size:.68rem;color:var(--ink3);text-align:center;padding:2px 0">${ingsSolo[0]?.unidad||''}</div>
   <button onclick="document.getElementById('${prefix}-row-${n}').remove();${isCreate?'recalcTotal()':''}" style="background:rgba(192,48,42,.1);border:none;color:var(--danger);border-radius:8px;width:28px;height:30px;cursor:pointer;font-size:.82rem">✕</button>`;
@@ -1422,8 +1474,11 @@ function renderStock(){
 function openIng(id){const i=id?ING().find(x=>x.id==id):null;document.getElementById('ing-titulo').textContent=i?'Editar':'Nuevo';document.getElementById('i-edit-id').value=id||'';document.getElementById('i-nombre').value=i?.nombre||'';document.getElementById('i-cant').value=i?.cant||'';document.getElementById('i-unidad').value=i?.unidad||'kg';document.getElementById('i-tipo').value=i?.tipo||'ingrediente';document.getElementById('i-min').value=i?.min||'';document.getElementById('i-max').value=i?.max||'';document.getElementById('i-costo').value=i?.costo||'';document.getElementById('i-pventa').value=i?.precioVenta||'';om('mo-ing');}
 function openIngTipo(tipo){openIng(null);setTimeout(()=>{const el=document.getElementById('i-tipo');if(el)el.value=tipo;},60);}
 function saveIng(){const nombre=document.getElementById('i-nombre').value.trim();if(!nombre){toast('❌ Ingresa un nombre');return;}const eid=parseInt(document.getElementById('i-edit-id').value)||0;const data={nombre,tipo:document.getElementById('i-tipo').value||'ingrediente',cant:N(document.getElementById('i-cant').value),unidad:document.getElementById('i-unidad').value,min:N(document.getElementById('i-min').value),max:N(document.getElementById('i-max').value)||100,costo:N(document.getElementById('i-costo').value),precioVenta:N(document.getElementById('i-pventa').value),updated:new Date().toISOString()};if(eid){const i=ING().find(x=>x.id==eid);if(i){Object.assign(i,data);syncRow('inventario','update',i,i.id);}}else{const i={id:uid(),...data};DB.inventario.push(i);syncRow('inventario','write',i,i.id);}cm('mo-ing');toast('✅ Guardado');renderStock();}
-function renderMovForm(tipo){const cont=document.getElementById('inv-content');cont.innerHTML=`<div class="card"><div class="card-hd">${tipo==='entrada'?'📥 Entrada':'📤 Salida'}</div><div class="fg"><label class="fl">Ingrediente *</label><select class="fc" id="mf-ing" onchange="syncMU()">${ING().map(i=>`<option value="${i.id}">${i.nombre} (${R(i.cant)} ${i.unidad})</option>`).join('')}</select></div><div class="fr2"><div class="fg"><label class="fl">Cantidad</label><input class="fc" id="mf-cant" type="number" step="0.001"></div><div class="fg"><label class="fl">Unidad</label><select class="fc" id="mf-unit">${['kg','g','L','ml','pzs','tazas','cdas'].map(u=>`<option>${u}</option>`).join('')}</select></div></div>${tipo==='entrada'?`<div class="fg"><label class="fl">Costo total ($)</label><input class="fc" id="mf-costo" type="number" step="0.01"></div>`:''}<div class="fg"><label class="fl">Notas</label><input class="fc" id="mf-notas"></div><button class="btn btn-amber btn-block" onclick="regMov('${tipo}')">💾 Registrar</button></div>`;syncMU();}
-function syncMU(){const sel=document.getElementById('mf-ing');if(!sel)return;const i=ING().find(x=>x.id==sel.value);if(i){const u=document.getElementById('mf-unit');if(u)u.value=i.unidad;}}
+function renderMovForm(tipo){const cont=document.getElementById('inv-content');cont.innerHTML=`<div class="card"><div class="card-hd">${tipo==='entrada'?'📥 Entrada':'📤 Salida'}</div><div class="fg"><label class="fl">Ingrediente *</label><select class="fc" id="mf-ing" onchange="syncMU()">${ING_ASC().map(i=>`<option value="${i.id}">${i.nombre} (${R(i.cant)} ${i.unidad})</option>`).join('')}</select></div><div class="fr2"><div class="fg"><label class="fl">Cantidad</label><input class="fc" id="mf-cant" type="number" step="0.001" oninput="calcCostoEntrada()"></div><div class="fg"><label class="fl">Unidad</label><select class="fc" id="mf-unit">${['kg','g','L','ml','pzs','tazas','cdas'].map(u=>`<option>${u}</option>`).join('')}</select></div></div>${tipo==='entrada'?`<div class="fg"><label class="fl">Costo unitario ($/unidad — referencia)</label><input class="fc" id="mf-costo-unit" type="number" step="0.01" placeholder="0.00" oninput="calcCostoEntrada()" readonly style="background:var(--paper)"></div><div class="fg"><label class="fl">Costo total ($)</label><input class="fc" id="mf-costo" type="number" step="0.01" placeholder="0.00" oninput="calcCostoUnitFromTotal()"></div>`:''}<div class="fg"><label class="fl">Notas</label><input class="fc" id="mf-notas"></div><button class="btn btn-amber btn-block" onclick="regMov('${tipo}')">💾 Registrar</button></div>`;syncMU();}
+function syncMU(){const sel=document.getElementById('mf-ing');if(!sel)return;const i=ING().find(x=>x.id==sel.value);if(i){const u=document.getElementById('mf-unit');if(u)u.value=i.unidad;// Pre-cargar costo unitario del ingrediente si existe
+const cu=document.getElementById('mf-costo-unit');if(cu&&i.costo){cu.value=i.costo;calcCostoEntrada();}}}
+function calcCostoEntrada(){const cant=N(document.getElementById('mf-cant')?.value)||0;const cu=N(document.getElementById('mf-costo-unit')?.value)||0;const total=document.getElementById('mf-costo');if(total&&cant&&cu)total.value=(cant*cu).toFixed(2);}
+function calcCostoUnitFromTotal(){const cant=N(document.getElementById('mf-cant')?.value)||0;const total=N(document.getElementById('mf-costo')?.value)||0;const cu=document.getElementById('mf-costo-unit');if(cu&&cant>0&&total>0)cu.value=(total/cant).toFixed(4);}
 function regMov(tipo){const iid=parseInt(document.getElementById('mf-ing').value),cant=N(document.getElementById('mf-cant').value);if(!iid||!cant){toast('❌ Completa los campos');return;}const ing=ING().find(i=>i.id==iid);if(!ing)return;if(tipo==='salida'&&ing.cant<cant){if(!confirm(`Stock insuficiente (${R(ing.cant)}). ¿Continuar?`))return;}if(tipo==='entrada')ing.cant+=cant;else ing.cant=Math.max(0,ing.cant-cant);ing.updated=new Date().toISOString();const m={id:uid(),tipo,nombre:ing.nombre,cant,costo:tipo==='entrada'?N(document.getElementById('mf-costo')?.value):0,notas:document.getElementById('mf-notas').value,fecha:new Date().toISOString(),ref:''};DB.movimientos.push(m);syncRow('inventario','update',ing,ing.id);syncRow('movimientos','write',m,m.id);toast(`✅ ${tipo==='entrada'?'Entrada':'Salida'} registrada`);renderStock();document.querySelectorAll('#tabs-inv .tab').forEach((t,i)=>t.classList.toggle('on',i===0));invTab='stock';}
 
 /* FIX #1: Editar entrada en movimientos restaurado */
@@ -1471,7 +1526,7 @@ function editarEntrada(id){
 ═══════════════════════════════════════ */
 let rIngCnt=0;
 function openRec(id){rIngCnt=0;const p=id?PRODS_DB().find(x=>x.id==id):null;document.getElementById('rec-titulo').textContent=p?'Editar Producto':'Nuevo Producto';document.getElementById('r-edit-id').value=id||'';document.getElementById('r-nombre').value=p?.nombre||'';document.getElementById('r-desc').value=p?.descr||'';document.getElementById('r-notas').value=p?.notas||'';document.getElementById('r-cat').value=p?.cat||'Pasteles';document.getElementById('r-precio').value=p?.precio||'';document.getElementById('r-porciones').value=p?.porciones||'';document.getElementById('r-tiempo').value=p?.tiempo||'';const wrap=document.getElementById('r-ings-list');wrap.innerHTML='';const ings=p?(Array.isArray(p.ings)?p.ings:(typeof p.ings==='string'?JSON.parse(p.ings||'[]'):[])):[]; if(ings.length)ings.forEach(u=>addRecRow(u.iid,u.cant));else addRecRow();om('mo-rec');}
-function addRecRow(preIid,preCant){const wrap=document.getElementById('r-ings-list');const n=rIngCnt++;const div=document.createElement('div');div.className='rrow';div.id=`rr-${n}`;const ingsSolo=ING().filter(i=>!i.tipo||i.tipo==='ingrediente'||i.tipo==='');div.innerHTML=`<select id="rr-i-${n}" style="padding:6px 8px;border:1.5px solid var(--border2);border-radius:8px;font-size:.74rem;background:var(--paper2);color:var(--ink);outline:none;">${ingsSolo.map(i=>`<option value="${i.id}"${i.id==preIid?' selected':''}>${i.nombre}</option>`).join('')}</select><input type="number" step="0.001" id="rr-c-${n}" value="${preCant||''}" placeholder="cant" style="padding:6px 8px;border:1.5px solid var(--border2);border-radius:8px;font-size:.8rem;background:var(--paper2);color:var(--ink);outline:none;"><div id="rr-u-${n}" class="ru">${preIid?(ingsSolo.find(i=>i.id==preIid)?.unidad||ingsSolo[0]?.unidad||''):ingsSolo[0]?.unidad||''}</div><button class="del-r" onclick="document.getElementById('rr-${n}').remove()">✕</button>`;wrap.appendChild(div);div.querySelector(`#rr-i-${n}`).addEventListener('change',function(){const i=ingsSolo.find(x=>x.id==this.value);if(i)document.getElementById(`rr-u-${n}`).textContent=i.unidad;});}
+function addRecRow(preIid,preCant){const wrap=document.getElementById('r-ings-list');const n=rIngCnt++;const div=document.createElement('div');div.className='rrow';div.id=`rr-${n}`;const ingsSolo=INGS_SOLO_ASC();div.innerHTML=`<select id="rr-i-${n}" style="padding:6px 8px;border:1.5px solid var(--border2);border-radius:8px;font-size:.74rem;background:var(--paper2);color:var(--ink);outline:none;">${ingsSolo.map(i=>`<option value="${i.id}"${i.id==preIid?' selected':''}>${i.nombre}</option>`).join('')}</select><input type="number" step="0.001" id="rr-c-${n}" value="${preCant||''}" placeholder="cant" style="padding:6px 8px;border:1.5px solid var(--border2);border-radius:8px;font-size:.8rem;background:var(--paper2);color:var(--ink);outline:none;"><div id="rr-u-${n}" class="ru">${preIid?(ingsSolo.find(i=>i.id==preIid)?.unidad||ingsSolo[0]?.unidad||''):ingsSolo[0]?.unidad||''}</div><button class="del-r" onclick="document.getElementById('rr-${n}').remove()">✕</button>`;wrap.appendChild(div);div.querySelector(`#rr-i-${n}`).addEventListener('change',function(){const i=ingsSolo.find(x=>x.id==this.value);if(i)document.getElementById(`rr-u-${n}`).textContent=i.unidad;});}
 function saveRec(){const nombre=document.getElementById('r-nombre').value.trim();if(!nombre){toast('❌ Ingresa el nombre');return;}const ings=[];for(let n=0;n<rIngCnt;n++){const ie=document.getElementById(`rr-i-${n}`),ce=document.getElementById(`rr-c-${n}`);if(!ie||!ce)continue;const cant=N(ce.value);if(!cant)continue;ings.push({iid:parseInt(ie.value),cant});}const data={nombre,cat:document.getElementById('r-cat').value,precio:N(document.getElementById('r-precio').value),porciones:parseInt(document.getElementById('r-porciones').value)||0,tiempo:parseInt(document.getElementById('r-tiempo').value)||0,descr:document.getElementById('r-desc').value,notas:document.getElementById('r-notas').value,ings,updated:new Date().toISOString()};const eid=parseInt(document.getElementById('r-edit-id').value)||0;if(eid){const p=PRODS_DB().find(x=>x.id==eid);if(p){Object.assign(p,data);syncRow('productos','update',p,p.id);}}else{const p={id:uid(),...data};DB.productos.push(p);syncRow('productos','write',p,p.id);}cm('mo-rec');toast('✅ Producto guardado');renderRecs();fillRecSel();}
 function renderRecs(){
   const hdr=document.getElementById('rec-header');
@@ -1808,8 +1863,8 @@ function generarReciboCobro(pedId,monto,metodo,saldoRestante){
   const p=PEDS_DB().find(x=>x.id==pedId);if(!p)return;
   const num=nextFacNum(),fecha=new Date().toLocaleDateString('es',{day:'2-digit',month:'2-digit',year:'numeric'});
   const{filas}=buildPedFilas(p);
-  // saldoRestante se pasa explícitamente para evitar usar p.restante ya actualizado
   const saldo=saldoRestante!==undefined?saldoRestante:Math.max(0,N(p.restante)-monto);
+  const saldoAntesPago=saldo+monto; // restante antes de este pago
   showFactura('Recibo de Pago',facHeader('Recibo de Pago',num,fecha)+facClienteRow(p)+facTabla(filas)+
     `<div style="text-align:center;padding:14px 0;background:#fdf5e9;border-radius:10px;margin-bottom:12px;border:2px solid rgba(100,60,20,.15)">
       <div style="font-size:11px;color:#7a4a20;font-weight:700;margin-bottom:3px">MONTO RECIBIDO</div>
@@ -1818,6 +1873,7 @@ function generarReciboCobro(pedId,monto,metodo,saldoRestante){
     </div>`+
     facTotales([
       {label:'Total del pedido:',valor:money(p.total)},
+      {label:'Restante antes de este pago:',valor:money(saldoAntesPago)},
       {label:'Este pago:',valor:money(monto)},
       {label:'<b>Saldo restante:</b>',valor:`<b style="color:${saldo<=0?'#2a8040':'#c0302a'}">${money(saldo)}</b>`,highlight:true}
     ])+facPie(p.notas));
