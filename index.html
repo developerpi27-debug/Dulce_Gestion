@@ -1644,7 +1644,7 @@ function imprimirVentasDia(fechaParam){
   const printHtml=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Cierre de Caja — ${fDate(h)}</title>
   <style>*{box-sizing:border-box}body{font-family:Arial,sans-serif;padding:20px 24px;color:#111;max-width:800px;margin:auto}table{width:100%;border-collapse:collapse}tr{page-break-inside:avoid}th,td{font-size:.82rem}@page{margin:12mm 15mm;size:A4 portrait}</style>
   </head><body>${html}<script>window.onload=function(){setTimeout(function(){window.print();},300);}<\/script></body></html>`;
-  const w=window.open(','_blank','width=900,height=1000');if(!w){toast('⚠️ Permite ventanas emergentes para imprimir');return;}
+  const w=window.open('','_blank','width=900,height=1000');if(!w){toast('⚠️ Permite ventanas emergentes para imprimir');return;}
   w.document.write(printHtml);w.document.close();
 }
 
