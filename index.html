@@ -521,10 +521,8 @@ select.fc{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
     <div id="extra-create-wrap"></div>
     <button class="btn btn-ghost btn-sm" onclick="addExtraRow('extra-create-wrap','ec')" style="font-size:.7rem">+ Agregar extra</button>
   </div>
-  <div class="fr2">
-    <div class="fg"><label class="fl">Cantidad</label><input class="fc" id="f-qty" type="number" min="1" value="1" oninput="onQtyChange()"></div>
-    <div class="fg"><label class="fl">Precio Total</label><input class="fc" id="f-total" type="number" placeholder="0.00" oninput="calcRest()"></div>
-  </div>
+  <div class="fg"><label class="fl">Precio Total</label><input class="fc" id="f-total" type="number" placeholder="0.00" oninput="calcRest()"></div>
+  <input type="hidden" id="f-qty" value="1">
   <div id="f-price-breakdown" style="display:none;margin-top:-8px;margin-bottom:10px;padding:7px 10px;background:rgba(201,124,30,.07);border-radius:8px;border:1px solid rgba(201,124,30,.18);font-size:.72rem;color:var(--ink2)"></div>
   <div class="fr2">
     <div class="fg"><label class="fl">Fecha Entrega *</label><input class="fc" id="f-fecha" type="date"></div>
@@ -955,7 +953,7 @@ async function syncRow(table,action,data,id){
       if('fechaDeseada' in payload){payload.fecha_deseada=payload.fechaDeseada;delete payload.fechaDeseada;}
       if('notasInternas' in payload){payload.notas_internas=payload.notasInternas;delete payload.notasInternas;}
       if('recId' in payload){payload.rec_id=payload.recId;delete payload.recId;}
-      if('pedProds' in payload){delete payload.pedProds;}// not a DB column — stored in memory only
+      if('pedProds' in payload){payload.ped_prods=Array.isArray(payload.pedProds)?payload.pedProds:[];delete payload.pedProds;}
       if('ingsCalc' in payload){payload.ings_calc=payload.ingsCalc;delete payload.ingsCalc;}
       if('extrasCreate' in payload){payload.extras_create=payload.extrasCreate;delete payload.extrasCreate;}
       if('extrasProduccion' in payload){payload.extras_produccion=payload.extrasProduccion;delete payload.extrasProduccion;}
@@ -1282,7 +1280,7 @@ function verPed(id){
   const src=iU.length?iU:iC;
   if(src.length){
     // Group by product if pedProds available
-    const pedProds=parseArr(p.pedProds);
+    const pedProds=parseArr(p.pedProds||p.ped_prods);
     if(pedProds.length>1&&!iU.length){
       // Multi-product: show per product
       ih+=`<div style="font-size:.7rem;font-weight:700;color:var(--ink2);margin-bottom:5px">📋 PLANIFICADOS</div>`;
@@ -1588,12 +1586,12 @@ function openEditPed(id){
   document.getElementById('f-hora').value=p.hora||'';
   document.getElementById('f-notas').value=p.notas||'';
   document.getElementById('f-estado').value=p.estado;
-  // Cargar producto(s) del catálogo — pedProds tiene prioridad
-  const pedProdsEdit=parseArr(p.pedProds);
+  // Cargar producto(s) del catálogo — pedProds (memory) o ped_prods (Supabase) tienen prioridad
+  const pedProdsEdit=parseArr(p.pedProds||p.ped_prods);
   if(pedProdsEdit.length>0){
-    pedProdsEdit.forEach(({recId,qty})=>addPedProd(recId,qty));
-  }else if(p.recId){
-    addPedProd(p.recId,p.qty||1);
+    pedProdsEdit.forEach(({recId,qty})=>{if(recId)addPedProd(recId,qty||1);});
+  }else if(p.recId||p.rec_id){
+    addPedProd(p.recId||p.rec_id,p.qty||1);
   }
   // Cargar extras precargados
   let extrasCargar=parseArr(p.extrasCreate);
@@ -2025,7 +2023,7 @@ function facPie(notas){const pie=CFG.pie||'',cond=CFG.condiciones||'',grac=CFG.g
 function buildPedFilas(p){
   if(!p.extrasCreate||String(p.extrasCreate)==='[]'){const er=DB.extras_pedidos.find(e=>String(e.pedidoId||e.pedido_id)===String(p.id));if(er&&er.extras){try{p.extrasCreate=typeof er.extras==='string'?JSON.parse(er.extras):er.extras;}catch{}}}
   const pa=v=>{if(!v||v===''||v==='null')return[];if(Array.isArray(v))return v;let s=typeof v==='string'?v:String(v);for(let i=0;i<3;i++){s=s.trim();if(!s.startsWith('[')&&!s.startsWith('{'))break;try{const p=JSON.parse(s);if(Array.isArray(p))return p;if(typeof p==='string'){s=p;continue;}break;}catch{break;}}return[];};
-  const pedProds=pa(p.pedProds);
+  const pedProds=pa(p.pedProds||p.ped_prods);
   const eC=pa(p.extrasCreate),eP=pa(p.extrasProduccion),eE=pa(p.extrasEntrega);
   const ecIds=new Set(eC.map(u=>String(u.iid)));
   const ePNew=eP.filter(u=>!ecIds.has(String(u.iid)));
