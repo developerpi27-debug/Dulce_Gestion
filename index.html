@@ -955,6 +955,7 @@ async function syncRow(table,action,data,id){
       if('fechaDeseada' in payload){payload.fecha_deseada=payload.fechaDeseada;delete payload.fechaDeseada;}
       if('notasInternas' in payload){payload.notas_internas=payload.notasInternas;delete payload.notasInternas;}
       if('recId' in payload){payload.rec_id=payload.recId;delete payload.recId;}
+      if('pedProds' in payload){delete payload.pedProds;}// not a DB column — stored in memory only
       if('ingsCalc' in payload){payload.ings_calc=payload.ingsCalc;delete payload.ingsCalc;}
       if('extrasCreate' in payload){payload.extras_create=payload.extrasCreate;delete payload.extrasCreate;}
       if('extrasProduccion' in payload){payload.extras_produccion=payload.extrasProduccion;delete payload.extrasProduccion;}
@@ -1445,9 +1446,23 @@ function parseArr(v){if(!v||v===''||v==='null')return[];if(Array.isArray(v))retu
 // DELETE + INSERT para extras_pedidos (evita 409 Conflict)
 async function upsertExtrasPedido(pedidoId,extras){
   const eid='ext_'+pedidoId;
-  try{await sbDelete('extras_pedidos',eid);}catch{}
+  // Delete by pedido_id column (more reliable than id)
+  try{
+    const url=`${SUPABASE_URL}/rest/v1/extras_pedidos?pedido_id=eq.${encodeURIComponent(pedidoId)}`;
+    await fetch(url,{method:'DELETE',headers:sbHeaders()});
+  }catch{}
+  // Small delay to ensure delete completes
+  await new Promise(r=>setTimeout(r,150));
   const er={id:eid,pedido_id:pedidoId,extras,created:new Date().toISOString()};
-  try{await sbUpsert('extras_pedidos',er);}catch(e){syncQueue.push({table:'extras_pedidos',action:'upsert',data:er,id:eid,ts:Date.now()});LS.s('dg_queue',syncQueue);}
+  try{
+    // Use plain INSERT (not upsert) since we just deleted
+    const url=`${SUPABASE_URL}/rest/v1/extras_pedidos`;
+    const r=await fetch(url,{method:'POST',headers:{...sbHeaders(),'Prefer':'return=minimal'},body:JSON.stringify([er])});
+    if(!r.ok){const t=await r.text();console.warn('extras_pedidos insert:',r.status,t);}
+  }catch(e){
+    syncQueue.push({table:'extras_pedidos',action:'upsert',data:er,id:eid,ts:Date.now()});
+    LS.s('dg_queue',syncQueue);
+  }
   DB.extras_pedidos=DB.extras_pedidos.filter(e=>e.id!==eid&&String(e.pedido_id)!==String(pedidoId));
   DB.extras_pedidos.push(er);
 }
@@ -1501,9 +1516,25 @@ function recalcTotal(){
   if(prods.length||costoExtras>0)document.getElementById('f-total').value=total.toFixed(2);
   const bd=document.getElementById('f-price-breakdown');
   if(bd){if(prodsDetalle.length||costoExtras>0){let lines=[...prodsDetalle,...extrasDetalle];if(costoExtras>0)lines.push('<b>Total: '+money(total)+'</b>');bd.innerHTML=lines.join('<br>');bd.style.display='block';}else bd.style.display='none';}
-  // Mostrar ingredientes del primer producto
-  if(prods.length){const p=PRODS_DB().find(x=>x.id==prods[0].recId);if(p)showRecPrev(p,prods[0].qty);else document.getElementById('rec-prev').style.display='none';}
-  else document.getElementById('rec-prev').style.display='none';
+  // Mostrar ingredientes de TODOS los productos
+  const prevDiv=document.getElementById('rec-prev');
+  const prevList=document.getElementById('rec-prev-list');
+  if(prods.length){
+    let allIngHtml='';
+    prods.forEach(({recId,qty})=>{
+      const prod=PRODS_DB().find(p=>p.id==recId);if(!prod)return;
+      if(prods.length>1)allIngHtml+=`<div style="font-size:.68rem;font-weight:700;color:var(--amber);margin:4px 0 2px">${prod.nombre} ×${qty}</div>`;
+      const pings=parseArr(prod.ings);
+      pings.forEach(u=>{const ing=ING().find(i=>i.id==u.iid);if(!ing)return;const c=u.cant*qty;const ok=ing.cant>=c;allIngHtml+=`<div class="prev-ing-row"><span class="prev-ing-name">${ing.nombre}</span><span class="prev-ing-qty ${ok?'ok':'lo'}">${R(c)}</span><span class="prev-ing-unit">${ing.unidad}</span><span class="prev-ing-badge ${ok?'ok':'lo'}">${ok?'✓':'⚠️'}</span></div>`;});
+      const costo=pings.reduce((s,u)=>{const ing=ING().find(i=>i.id==u.iid);return s+(ing?.costo?ing.costo*u.cant*qty:0);},0);
+      allIngHtml+=`<div style="text-align:right;font-size:.68rem;color:var(--ink3);margin-bottom:4px">💚 Precio base (${qty} × ${money(prod.precio)})</div>`;
+      if(costo>0)allIngHtml+=`<div style="text-align:right;font-size:.65rem;color:var(--ink3)">Costo: ${money(costo)}</div>`;
+    });
+    prevList.innerHTML=allIngHtml;
+    prevDiv.style.display='block';
+  }else{
+    prevDiv.style.display='none';
+  }
   calcRest();
 }
 function showRecPrev(prod,qty){const ings=Array.isArray(prod.ings)?prod.ings:(typeof prod.ings==='string'?JSON.parse(prod.ings||'[]'):[]);const costoBase=ings.reduce((s,u)=>{const i=ING().find(x=>x.id==u.iid);return s+(i?.costo?i.costo*u.cant*qty:0);},0);const html=ings.map(u=>{const ing=ING().find(i=>i.id==u.iid);if(!ing)return'';const tc=R(u.cant*qty);const ok=ing.cant>=u.cant*qty;return`<div class="ic-row"><span class="ic-name">${ing.nombre}</span><span class="ic-qty" style="color:${ok?'var(--amber)':'var(--danger)'}">${tc}</span><span class="ic-unit">${ing.unidad}</span><span class="ic-stock ${ok?'ok':'lo'}">${ok?'✓':'⚠️'}</span></div>`;}).join('');const pb=N(prod.precio)*qty;document.getElementById('rec-prev-list').innerHTML=html+`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px;margin-top:4px;background:rgba(201,124,30,.08);border-radius:8px;border:1px solid rgba(201,124,30,.2)"><span style="font-size:.74rem;font-weight:700;color:var(--ink2)">💵 Precio base (${qty} × ${money(prod.precio)})</span><span style="font-size:.88rem;font-weight:700;color:var(--amber)">${money(pb)}</span></div>${costoBase>0?`<div style="font-size:.68rem;color:var(--ink3);text-align:right;margin-top:3px">Costo: ${money(costoBase)}</div>`:''}`; document.getElementById('rec-prev').style.display='block';}
