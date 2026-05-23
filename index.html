@@ -1280,7 +1280,23 @@ function verPed(id){
   const prod=p.recId?PRODS_DB().find(x=>x.id==p.recId):null;
   let ih='';
   const src=iU.length?iU:iC;
-  if(src.length){ih+=`<div style="font-size:.7rem;font-weight:700;color:var(--ink2);margin-bottom:5px">${iU.length?'🧂 USADOS':'📋 PLANIFICADOS'}</div>`;ih+=src.map(u=>{const i=ING().find(x=>x.id==u.iid);return`<div class="ic-row"><span class="ic-name">${i?.nombre||'?'}</span><span class="ic-qty">${R(u.cant)}</span><span class="ic-unit">${i?.unidad||''}</span></div>`;}).join('');}
+  if(src.length){
+    // Group by product if pedProds available
+    const pedProds=parseArr(p.pedProds);
+    if(pedProds.length>1&&!iU.length){
+      // Multi-product: show per product
+      ih+=`<div style="font-size:.7rem;font-weight:700;color:var(--ink2);margin-bottom:5px">📋 PLANIFICADOS</div>`;
+      pedProds.forEach(({recId,qty})=>{
+        const prod=PRODS_DB().find(x=>x.id==recId);if(!prod)return;
+        ih+=`<div style="font-size:.72rem;font-weight:700;color:var(--amber);margin:5px 0 3px;padding:3px 7px;background:rgba(201,124,30,.08);border-radius:6px">🎂 ${prod.nombre} ×${qty}</div>`;
+        const pings=parseArr(prod.ings);
+        pings.forEach(u=>{const i=ING().find(x=>x.id==u.iid);if(!i)return;const c=u.cant*qty;ih+=`<div class="ic-row"><span class="ic-name">${i.nombre}</span><span class="ic-qty">${R(c)}</span><span class="ic-unit">${i.unidad}</span></div>`;});
+      });
+    }else{
+      ih+=`<div style="font-size:.7rem;font-weight:700;color:var(--ink2);margin-bottom:5px">${iU.length?'🧂 USADOS':'📋 PLANIFICADOS'}</div>`;
+      ih+=src.map(u=>{const i=ING().find(x=>x.id==u.iid);return`<div class="ic-row"><span class="ic-name">${i?.nombre||'?'}</span><span class="ic-qty">${R(u.cant)}</span><span class="ic-unit">${i?.unidad||''}</span></div>`;}).join('');
+    }
+  }
   if(eC.length){ih+=`<div style="font-size:.7rem;font-weight:700;color:var(--mauve);margin:7px 0 4px">➕ EXTRAS DEL PEDIDO</div>`;ih+=eC.map(u=>{const i=ING().find(x=>x.id==u.iid);const pv=N(i?.precioVenta)>0?N(i.precioVenta):(N(i?.costo)||0);return`<div class="ic-row" style="background:rgba(124,74,106,.06)"><span class="ic-name">${i?.nombre||u.nombre||'Extra'}</span><span class="ic-qty" style="color:var(--mauve)">${R(u.cant)}</span><span class="ic-unit">${i?.unidad||''}</span>${pv>0?`<span style="font-size:.72rem;font-weight:700;color:var(--amber);margin-left:auto">${money(pv*N(u.cant))}</span>`:''}</div>`;}).join('');}
   const ae=[...(eP||[]),...(eE||[])];if(ae.length){ih+=`<div style="font-size:.7rem;font-weight:700;color:var(--sage);margin:7px 0 4px">➕ EXTRAS PRODUCCIÓN/ENTREGA</div>`;ih+=ae.map(u=>{const i=ING().find(x=>x.id==u.iid);return`<div class="ic-row" style="background:rgba(74,124,90,.06)"><span class="ic-name">${i?.nombre||'?'}</span><span class="ic-qty" style="color:var(--sage)">${R(u.cant)}</span><span class="ic-unit">${i?.unidad||''}</span></div>`;}).join('');}
   if(!ih)ih=`<div style="font-size:.78rem;color:var(--ink3);font-style:italic">Sin ingredientes registrados</div>`;
@@ -1319,6 +1335,7 @@ async function setEst(id,estado){
     for(const pg of pagosAsoc){await syncRow('pagos','delete',null,pg.id);}
     DB.pagos=(DB.pagos||[]).filter(pg=>String(pg.pedidoId||pg.pedido_id)!==String(id));
     toast(`✅ Pedido cancelado — ${pagosAsoc.length} pago(s) eliminado(s)`);
+    cm('mo-ver'); // Cerrar detalle al cancelar
   }else{
     toast('Estado: '+estado);
   }
@@ -1516,19 +1533,20 @@ function recalcTotal(){
   if(prods.length||costoExtras>0)document.getElementById('f-total').value=total.toFixed(2);
   const bd=document.getElementById('f-price-breakdown');
   if(bd){if(prodsDetalle.length||costoExtras>0){let lines=[...prodsDetalle,...extrasDetalle];if(costoExtras>0)lines.push('<b>Total: '+money(total)+'</b>');bd.innerHTML=lines.join('<br>');bd.style.display='block';}else bd.style.display='none';}
-  // Mostrar ingredientes de TODOS los productos
+  // Mostrar ingredientes de TODOS los productos con el estilo original
   const prevDiv=document.getElementById('rec-prev');
   const prevList=document.getElementById('rec-prev-list');
   if(prods.length){
     let allIngHtml='';
     prods.forEach(({recId,qty})=>{
       const prod=PRODS_DB().find(p=>p.id==recId);if(!prod)return;
-      if(prods.length>1)allIngHtml+=`<div style="font-size:.68rem;font-weight:700;color:var(--amber);margin:4px 0 2px">${prod.nombre} ×${qty}</div>`;
       const pings=parseArr(prod.ings);
-      pings.forEach(u=>{const ing=ING().find(i=>i.id==u.iid);if(!ing)return;const c=u.cant*qty;const ok=ing.cant>=c;allIngHtml+=`<div class="prev-ing-row"><span class="prev-ing-name">${ing.nombre}</span><span class="prev-ing-qty ${ok?'ok':'lo'}">${R(c)}</span><span class="prev-ing-unit">${ing.unidad}</span><span class="prev-ing-badge ${ok?'ok':'lo'}">${ok?'✓':'⚠️'}</span></div>`;});
-      const costo=pings.reduce((s,u)=>{const ing=ING().find(i=>i.id==u.iid);return s+(ing?.costo?ing.costo*u.cant*qty:0);},0);
-      allIngHtml+=`<div style="text-align:right;font-size:.68rem;color:var(--ink3);margin-bottom:4px">💚 Precio base (${qty} × ${money(prod.precio)})</div>`;
-      if(costo>0)allIngHtml+=`<div style="text-align:right;font-size:.65rem;color:var(--ink3)">Costo: ${money(costo)}</div>`;
+      const costoBase=pings.reduce((s,u)=>{const i=ING().find(x=>x.id==u.iid);return s+(i?.costo?i.costo*u.cant*qty:0);},0);
+      if(prods.length>1) allIngHtml+=`<div style="font-size:.7rem;font-weight:700;color:var(--amber);margin:6px 0 3px;padding:4px 6px;background:rgba(201,124,30,.08);border-radius:6px">🎂 ${prod.nombre} ×${qty}</div>`;
+      pings.forEach(u=>{const ing=ING().find(i=>i.id==u.iid);if(!ing)return;const c=u.cant*qty;const ok=ing.cant>=c;allIngHtml+=`<div class="ic-row"><span class="ic-name">${ing.nombre}</span><span class="ic-qty" style="color:${ok?'var(--amber)':'var(--danger)'}">${R(c)}</span><span class="ic-unit">${ing.unidad}</span><span class="ic-stock ${ok?'ok':'lo'}">${ok?'✓':'⚠️'}</span></div>`;});
+      const pb=N(prod.precio)*qty;
+      allIngHtml+=`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px;margin-top:4px;background:rgba(201,124,30,.08);border-radius:8px;border:1px solid rgba(201,124,30,.2)"><span style="font-size:.74rem;font-weight:700;color:var(--ink2)">💵 Precio base (${qty} × ${money(prod.precio)})</span><span style="font-size:.88rem;font-weight:700;color:var(--amber)">${money(pb)}</span></div>`;
+      if(costoBase>0)allIngHtml+=`<div style="font-size:.68rem;color:var(--ink3);text-align:right;margin-top:3px">Costo: ${money(costoBase)}</div>`;
     });
     prevList.innerHTML=allIngHtml;
     prevDiv.style.display='block';
@@ -1570,21 +1588,26 @@ function openEditPed(id){
   document.getElementById('f-hora').value=p.hora||'';
   document.getElementById('f-notas').value=p.notas||'';
   document.getElementById('f-estado').value=p.estado;
-  // Cargar producto(s) del catálogo
-  if(p.recId){addPedProd(p.recId,p.qty||1);}
-  else{// Try to detect from pedProds field if multi-product saved
-    const pp=parseArr(p.pedProds);
-    if(pp.length){pp.forEach(({recId,qty})=>addPedProd(recId,qty));}
+  // Cargar producto(s) del catálogo — pedProds tiene prioridad
+  const pedProdsEdit=parseArr(p.pedProds);
+  if(pedProdsEdit.length>0){
+    pedProdsEdit.forEach(({recId,qty})=>addPedProd(recId,qty));
+  }else if(p.recId){
+    addPedProd(p.recId,p.qty||1);
   }
-  // Cargar extras precargados con iid Y cant correctos
+  // Cargar extras precargados
   let extrasCargar=parseArr(p.extrasCreate);
   if(!extrasCargar.length){
     const er=DB.extras_pedidos.find(e=>String(e.pedidoId||e.pedido_id)===String(id));
     if(er){extrasCargar=parseArr(er.extras);}
   }
   extrasCargar.forEach(u=>{if(u.iid&&u.cant)addExtraRow('extra-create-wrap','ec',u.iid,u.cant);});
-  // Recalcular precio con extras cargados
-  setTimeout(()=>recalcTotal(),50);
+  // Recalcular precio; si no hay productos vinculados, restaurar precio original
+  setTimeout(()=>{
+    recalcTotal();
+    const totalEl=document.getElementById('f-total');
+    if(N(totalEl?.value)===0&&N(p.total)>0){totalEl.value=p.total;calcRest();}
+  },80);
   om('mo-ped');
 }
 function addExtraRow(wrapId,prefix,preIid,preCant){const wrap=document.getElementById(wrapId);const n=prefix==='le'?listoExtCnt++:prefix==='ee'?entExtCnt++:ecCnt++;const div=document.createElement('div');div.id=`${prefix}-row-${n}`;div.style.cssText='display:grid;grid-template-columns:1fr 68px 46px 28px;gap:5px;align-items:center;margin-bottom:5px;';const isCreate=(prefix==='ec');
@@ -1999,7 +2022,39 @@ function facClienteRow(p){return`<div style="background:#fdf5e9;border-radius:8p
 function facTabla(filas){return`<table style="width:100%;border-collapse:collapse;margin-bottom:12px"><thead><tr style="background:#1c0f00;color:#fff"><th style="padding:6px 8px;text-align:left;font-size:11px">DESCRIPCIÓN</th><th style="padding:6px 8px;text-align:center;font-size:11px">CANT.</th><th style="padding:6px 8px;text-align:right;font-size:11px">P.UNIT</th><th style="padding:6px 8px;text-align:right;font-size:11px">SUBTOTAL</th></tr></thead><tbody>${filas.map(f=>`<tr><td style="padding:6px 8px;border-bottom:1px solid #eee;font-size:12px">${f.desc}</td><td style="padding:6px 8px;border-bottom:1px solid #eee;font-size:12px;text-align:center">${f.qty}</td><td style="padding:6px 8px;border-bottom:1px solid #eee;font-size:12px;text-align:right">${N(f.precio)>0?money(f.precio):'—'}</td><td style="padding:6px 8px;border-bottom:1px solid #eee;font-size:12px;text-align:right;font-weight:700">${N(f.subtotal)>0?money(f.subtotal):'—'}</td></tr>`).join('')}</tbody></table>`;}
 function facTotales(lineas){return`<div style="display:flex;justify-content:flex-end;margin-bottom:12px"><table style="border-collapse:collapse;min-width:200px">${lineas.map(l=>`<tr><td style="padding:3px 9px;font-size:12px;color:${l.highlight?'#1c0f00':'#555'};font-weight:${l.highlight?'700':'400'};border-top:${l.highlight?'2px solid #1c0f00':'none'}">${l.label}</td><td style="padding:3px 9px;font-size:${l.highlight?'14px':'12px'};text-align:right;font-weight:${l.highlight?'700':'400'};color:${l.color||'#1c0f00'};border-top:${l.highlight?'2px solid #1c0f00':'none'}">${l.valor}</td></tr>`).join('')}</table></div>`;}
 function facPie(notas){const pie=CFG.pie||'',cond=CFG.condiciones||'',grac=CFG.gracias||'';return`<div style="border-top:1px solid #ddd;padding-top:10px;margin-top:6px">${notas?`<div style="background:#fdf5e9;border-radius:6px;padding:7px 9px;margin-bottom:8px;border-left:3px solid #c97c1e"><span style="font-size:10px;font-weight:700;color:#7a4a20">NOTAS: </span><span style="font-size:11px">${notas}</span></div>`:''} ${cond?`<div style="font-size:10px;color:#888;margin-bottom:3px">📋 ${cond}</div>`:''} ${pie?`<div style="font-size:10px;color:#888;margin-bottom:5px">${pie}</div>`:''} ${grac?`<div style="font-size:13px;font-weight:700;color:#c97c1e;text-align:center;margin-top:7px;font-family:Georgia,serif">${grac}</div>`:''}</div>`;}
-function buildPedFilas(p){if(!p.extrasCreate||String(p.extrasCreate)==='[]'){const er=DB.extras_pedidos.find(e=>String(e.pedidoId)===String(p.id));if(er&&er.extras){try{p.extrasCreate=typeof er.extras==='string'?JSON.parse(er.extras):er.extras;}catch{}}}const pa=v=>{if(!v||v===''||v==='null')return[];if(Array.isArray(v))return v;let s=typeof v==='string'?v:String(v);for(let i=0;i<3;i++){s=s.trim();if(!s.startsWith('[')&&!s.startsWith('{'))break;try{const p=JSON.parse(s);if(Array.isArray(p))return p;if(typeof p==='string'){s=p;continue;}break;}catch{break;}}return[];};const rec=p.recId?PRODS_DB().find(x=>x.id==p.recId):null;const qty=N(p.qty)||1;const precioUnit=rec?N(rec.precio):N(p.total)/qty;const precioBase=precioUnit*qty;const eC=pa(p.extrasCreate),eP=pa(p.extrasProduccion),eE=pa(p.extrasEntrega);const ecIds=new Set(eC.map(u=>String(u.iid)));const ePNew=eP.filter(u=>!ecIds.has(String(u.iid)));const billable=[...eC,...ePNew,...eE];const extMap={};billable.forEach(u=>{const k=String(u.iid);if(!extMap[k])extMap[k]={iid:u.iid,cant:0};extMap[k].cant+=N(u.cant);});let costoExtras=0;const extrasFilas=[];Object.values(extMap).forEach(u=>{const ing=ING().find(i=>i.id==u.iid);if(!u.cant)return;const nombre=ing?.nombre||u.nombre||'Extra';const unidad=ing?.unidad||u.unidad||'';const pv=N(ing?.precioVenta)>0?N(ing.precioVenta):(N(ing?.costo)||N(u.precioVenta)||0);const costo=pv?pv*N(u.cant):0;costoExtras+=costo;extrasFilas.push({desc:`➕ <b>${nombre}</b>`,qty:`${R(u.cant)} ${unidad}`,precio:pv||0,subtotal:costo});});const filas=[{desc:`<b>${p.descr}</b>${p.notas?`<br><span style="font-size:10px">${p.notas}</span>`:''}`,qty,precio:precioUnit,subtotal:precioBase},...extrasFilas];return{filas,precioBase,costoExtras,total:N(p.total)};}
+function buildPedFilas(p){
+  if(!p.extrasCreate||String(p.extrasCreate)==='[]'){const er=DB.extras_pedidos.find(e=>String(e.pedidoId||e.pedido_id)===String(p.id));if(er&&er.extras){try{p.extrasCreate=typeof er.extras==='string'?JSON.parse(er.extras):er.extras;}catch{}}}
+  const pa=v=>{if(!v||v===''||v==='null')return[];if(Array.isArray(v))return v;let s=typeof v==='string'?v:String(v);for(let i=0;i<3;i++){s=s.trim();if(!s.startsWith('[')&&!s.startsWith('{'))break;try{const p=JSON.parse(s);if(Array.isArray(p))return p;if(typeof p==='string'){s=p;continue;}break;}catch{break;}}return[];};
+  const pedProds=pa(p.pedProds);
+  const eC=pa(p.extrasCreate),eP=pa(p.extrasProduccion),eE=pa(p.extrasEntrega);
+  const ecIds=new Set(eC.map(u=>String(u.iid)));
+  const ePNew=eP.filter(u=>!ecIds.has(String(u.iid)));
+  const billable=[...eC,...ePNew,...eE];
+  const extMap={};billable.forEach(u=>{const k=String(u.iid);if(!extMap[k])extMap[k]={iid:u.iid,cant:0,nombre:u.nombre,unidad:u.unidad,precioVenta:u.precioVenta};extMap[k].cant+=N(u.cant);});
+  let costoExtras=0;
+  const extrasFilas=[];
+  Object.values(extMap).forEach(u=>{const ing=ING().find(i=>i.id==u.iid);if(!u.cant)return;const nombre=ing?.nombre||u.nombre||'Extra';const unidad=ing?.unidad||u.unidad||'';const pv=N(ing?.precioVenta)>0?N(ing.precioVenta):(N(ing?.costo)||N(u.precioVenta)||0);const costo=pv?pv*N(u.cant):0;costoExtras+=costo;extrasFilas.push({desc:`➕ <b>${nombre}</b>`,qty:`${R(u.cant)} ${unidad}`,precio:pv||0,subtotal:costo});});
+  let filas=[];
+  let precioBase=0;
+  if(pedProds.length>1){
+    // Multi-product: one line per product
+    pedProds.forEach(({recId,qty})=>{
+      const prod=PRODS_DB().find(x=>x.id==recId);if(!prod)return;
+      const lineTotal=N(prod.precio)*qty;
+      precioBase+=lineTotal;
+      filas.push({desc:`<b>${prod.nombre}</b>`,qty,precio:N(prod.precio),subtotal:lineTotal});
+    });
+    if(p.notas)filas[0].desc+=`<br><span style="font-size:10px">${p.notas}</span>`;
+  }else{
+    const rec=p.recId?PRODS_DB().find(x=>x.id==p.recId):null;
+    const qty=N(p.qty)||1;
+    const precioUnit=rec?N(rec.precio):N(p.total)/qty;
+    precioBase=precioUnit*qty;
+    filas=[{desc:`<b>${p.descr}</b>${p.notas?`<br><span style="font-size:10px">${p.notas}</span>`:''}`,qty,precio:precioUnit,subtotal:precioBase}];
+  }
+  filas=[...filas,...extrasFilas];
+  return{filas,precioBase,costoExtras,total:N(p.total)};
+}
 function generarFacturaAnticipo(pedId){const p=PEDS_DB().find(x=>x.id==pedId);if(!p)return;const num=nextFacNum(),fecha=new Date().toLocaleDateString('es',{day:'2-digit',month:'2-digit',year:'numeric'});const{filas,precioBase,costoExtras,total}=buildPedFilas(p);const totLines=[...(costoExtras>0?[{label:'Subtotal:',valor:money(precioBase)},{label:'Extras:',valor:money(costoExtras)},{label:'Total pedido:',valor:money(total)}]:[{label:'Total pedido:',valor:money(total)}]),{label:'<span style="color:#c97c1e">✅ Anticipo recibido:</span>',valor:`<span style="color:#2a8040;font-weight:700">${money(p.anticipo)}</span>`},{label:'<b>Saldo contra entrega:</b>',valor:`<b style="color:#c0302a">${money(p.restante)}</b>`,highlight:true}];showFactura('Recibo de Anticipo',facHeader('Recibo de Anticipo',num,fecha)+facClienteRow(p)+facTabla(filas)+facTotales(totLines)+facPie(p.notas));}
 function generarFacturaFinal(pedId){const p=PEDS_DB().find(x=>x.id==pedId);if(!p)return;const num=nextFacNum(),fecha=new Date().toLocaleDateString('es',{day:'2-digit',month:'2-digit',year:'numeric'});p.facNum=num;p.updated=new Date().toISOString();syncRow('pedidos','update',p,p.id);const{filas,precioBase,costoExtras,total}=buildPedFilas(p);const totLines=[...(costoExtras>0?[{label:'Subtotal:',valor:money(precioBase)},{label:'Extras:',valor:money(costoExtras)}]:[]),{label:'Subtotal:',valor:money(total)},{label:'Anticipo pagado:',valor:`-${money(p.anticipo)}`},{label:'<b>TOTAL A PAGAR:</b>',valor:`<b>${money(p.restante)}</b>`,highlight:true,color:N(p.restante)===0?'#2a8040':'#c0302a'},...(N(p.restante)===0?[{label:'Estado:',valor:'<span style="color:#2a8040;font-weight:700">✅ PAGADO COMPLETO</span>'}]:[])];showFactura('Factura de Venta',facHeader('Factura de Venta',num,fecha)+facClienteRow(p)+facTabla(filas)+facTotales(totLines)+facPie(p.notas));}
 function generarFacturaCotizacion(cotId){const c=DB.cotizaciones.find(x=>x.id==cotId);if(!c)return;const num=nextFacNum(),fecha=new Date().toLocaleDateString('es',{day:'2-digit',month:'2-digit',year:'numeric'});const vence=new Date(Date.now()+(c.valida||7)*86400000).toLocaleDateString('es',{day:'2-digit',month:'2-digit',year:'numeric'});const items=Array.isArray(c.items)?c.items:(typeof c.items==='string'?JSON.parse(c.items||'[]'):[]);const subtotal=items.reduce((s,i)=>s+N(i.precio),0),desc=c.descuento||0,total=subtotal*(1-desc/100);const cliente=`<div style="background:#fdf5e9;border-radius:8px;padding:9px 11px;margin-bottom:12px;border:1px solid rgba(100,60,20,.15)"><div style="font-size:10px;font-weight:700;color:#7a4a20;margin-bottom:4px">CLIENTE</div><div style="font-size:13px;font-weight:700">${c.cliente}</div>${c.evento?`<div style="font-size:11px">Evento: <b>${c.evento}</b></div>`:''}<div style="font-size:11px;color:#888">Válida hasta: <b>${vence}</b></div></div>`;showFactura('Cotización',facHeader('Cotización',num,fecha)+cliente+facTabla(items.map(i=>({desc:i.prod,qty:i.qty||1,precio:i.precioUnit||i.precio,subtotal:i.precio})))+facTotales([{label:'Subtotal:',valor:money(subtotal)},...(desc?[{label:`Descuento (${desc}%):`,valor:`-${money(subtotal*desc/100)}`}]:[]),{label:'<b>TOTAL ESTIMADO:</b>',valor:`<b>${money(total)}</b>`,highlight:true}])+facPie(c.notas));}
