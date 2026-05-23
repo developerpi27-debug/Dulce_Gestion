@@ -1387,6 +1387,19 @@ function confirmCobro(){if(cobroMode==='venta'){confirmarCobroVenta();return;}co
 ═══════════════════════════════════════ */
 let ecCnt=0;
 function resetPedForm(){ecCnt=0;['f-cli','f-tel','f-desc','f-total','f-anticipo','f-rest','f-notas'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});document.getElementById('f-qty').value='1';document.getElementById('f-fecha').value=today();document.getElementById('f-hora').value='10:00';document.getElementById('f-estado').value='pendiente';document.getElementById('f-rec').value='';document.getElementById('f-edit-id').value='';const amEl=document.getElementById('f-ant-metodo');if(amEl)amEl.value='Efectivo';document.getElementById('rec-prev').style.display='none';document.getElementById('extra-create-wrap').innerHTML='';const bd=document.getElementById('f-price-breakdown');if(bd)bd.style.display='none';document.getElementById('ped-titulo').textContent='Nuevo Pedido';fillRecSel();}
+// Helper global para parsear arrays JSON
+function parseArr(v){if(!v||v===''||v==='null')return[];if(Array.isArray(v))return v;let s=typeof v==='string'?v:String(v);for(let i=0;i<3;i++){s=s.trim();if(!s.startsWith('[')&&!s.startsWith('{'))break;try{const p=JSON.parse(s);if(Array.isArray(p))return p;if(typeof p==='string'){s=p;continue;}break;}catch{break;}}return[];}
+
+// DELETE + INSERT para extras_pedidos (evita 409 Conflict)
+async function upsertExtrasPedido(pedidoId,extras){
+  const eid='ext_'+pedidoId;
+  try{await sbDelete('extras_pedidos',eid);}catch{}
+  const er={id:eid,pedido_id:pedidoId,extras,created:new Date().toISOString()};
+  try{await sbUpsert('extras_pedidos',er);}catch(e){syncQueue.push({table:'extras_pedidos',action:'upsert',data:er,id:eid,ts:Date.now()});LS.s('dg_queue',syncQueue);}
+  DB.extras_pedidos=DB.extras_pedidos.filter(e=>e.id!==eid&&String(e.pedido_id)!==String(pedidoId));
+  DB.extras_pedidos.push(er);
+}
+
 function ING_ASC(){return[...ING()].sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''));}
 function INGS_SOLO_ASC(){return ING_ASC().filter(i=>!i.tipo||i.tipo==='ingrediente'||i.tipo==='');}
 function PRODS_ASC(){return[...PRODS_DB()].sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''));}
@@ -1402,18 +1415,13 @@ function savePed(){const cli=document.getElementById('f-cli').value.trim(),descr
     if(p){
       Object.assign(p,{cliente:cli,telefono:document.getElementById('f-tel').value,descr,qty,total,anticipo:ant,restante:total-ant,fecha,hora:document.getElementById('f-hora').value,estado:document.getElementById('f-estado').value,notas:document.getElementById('f-notas').value,recId,ingsCalc,extrasCreate:extras,updated:new Date().toISOString()});
       syncRow('pedidos','update',p,p.id);
-      // Actualizar extras en tabla extras_pedidos (upsert para no duplicar)
-      if(extras.length>0){
-        const er={id:'ext_'+p.id,pedido_id:p.id,extras,created:new Date().toISOString()};
-        const existingEr=DB.extras_pedidos.find(e=>e.id==='ext_'+p.id||e.pedidoId==p.id||e.pedido_id==p.id);
-        if(existingEr){Object.assign(existingEr,er);syncRow('extras_pedidos','upsert',er,er.id);}
-        else{DB.extras_pedidos.push(er);syncRow('extras_pedidos','upsert',er,er.id);}
-      }
+      // Actualizar extras con delete+insert para evitar conflictos
+      if(extras.length>0){upsertExtrasPedido(p.id,extras);}
     }
   }else{
     const p={id:uid(),cliente:cli,telefono:document.getElementById('f-tel').value,descr,qty,total,anticipo:ant,restante:total-ant,fecha,hora:document.getElementById('f-hora').value,estado:document.getElementById('f-estado').value,notas:document.getElementById('f-notas').value,recId,ingsCalc,extrasCreate:extras,extrasProduccion:[],extrasEntrega:[],ingsUsados:[],created:new Date().toISOString(),updated:new Date().toISOString()};
     DB.pedidos.push(p);syncRow('pedidos','write',p,p.id);
-    if(extras.length>0){const er={id:'ext_'+p.id,pedido_id:p.id,extras,created:new Date().toISOString()};const existingEr=DB.extras_pedidos.find(e=>e.id==='ext_'+p.id||String(e.pedido_id)===String(p.id));if(existingEr){Object.assign(existingEr,er);syncRow('extras_pedidos','upsert',er,er.id);}else{DB.extras_pedidos.push(er);syncRow('extras_pedidos','upsert',er,er.id);}}
+    if(extras.length>0){upsertExtrasPedido(p.id,extras);}
     if(ant>0){const antMetodo=document.getElementById('f-ant-metodo')?.value||'Efectivo';const pg={id:uid(),pedidoId:p.id,cliente:p.cliente,monto:ant,tipo:'anticipo',fecha:today(),metodo:antMetodo,created:new Date().toISOString()};DB.pagos.push(pg);syncRow('pagos','write',pg,pg.id);}
   }cm('mo-ped');toast('✅ Pedido guardado');resetPedForm();renderV(CUR);}
 function openEditPed(id){
@@ -1434,7 +1442,7 @@ function openEditPed(id){
   document.getElementById('f-estado').value=p.estado;
   if(p.recId){document.getElementById('f-rec').value=p.recId;onRecSel();}
   // Cargar extras del pedido
-  const extrasGuardados=pa(p.extrasCreate);
+  const extrasGuardados=parseArr(p.extrasCreate);
   if(!extrasGuardados.length){
     const er=DB.extras_pedidos.find(e=>String(e.pedidoId||e.pedido_id)===String(id));
     if(er&&er.extras){try{const ext=typeof er.extras==='string'?JSON.parse(er.extras):er.extras;ext.forEach(u=>addExtraRow('extra-create-wrap','ec',u.iid,u.cant));}catch{}}
