@@ -1332,11 +1332,13 @@ async function setEst(id,estado){
   if(estado==='cancelado'&&p.estado==='listo'){toast('❌ No se puede cancelar un pedido que ya está listo');return;}
   if(estado==='cancelado'&&!confirm('¿Cancelar este pedido?'))return;
   if(estado==='entregado'&&N(p.restante)>0){
-    const enCxc=(DB.cxc||[]).find(x=>(String(x.pedidoId)===String(id)||String(x.pedido_id)===String(id))&&x.estado!=='pagada');
+    const enCxc=(DB.cxc||[]).find(x=>(String(x.pedidoId||x.pedido_id)===String(id))&&x.estado!=='pagada');
     if(!enCxc){
-      toast('❌ Balance pendiente de '+money(p.restante)+'. Cobra el total o envía a CxC primero.');
+      // Regla 1: balance pendiente sin CxC → bloquear
+      toast('⚠️ Cobro pendiente — El pedido tiene un saldo de '+money(p.restante)+' sin cobrar y no está en CxC. Cobra el total o envíalo a CxC antes de marcar como entregado.');
       return;
     }
+    // Regla 2: balance pendiente PERO en CxC → permitir (continúa)
   }
   p.estado=estado;p.updated=new Date().toISOString();
   syncRow('pedidos','update',p,p.id);
@@ -1457,7 +1459,7 @@ let cobroId=null,cobroMode='pedido';
 function resetCobroModal(){cobroMode='pedido';const btn=document.getElementById('cobro-confirm-btn');if(btn){btn.style.display='';btn.textContent='✅ Confirmar';btn.onclick=confirmCobro;}}
 function openCobro(id){const p=PEDS_DB().find(x=>x.id==id);if(!p)return;
   // Verificar si ya hay una CxC activa para este pedido
-  const cxcActiva=(DB.cxc||[]).find(x=>String(x.pedidoId)===String(id)&&x.estado!=='pagada');
+  const cxcActiva=(DB.cxc||[]).find(x=>(String(x.pedidoId||x.pedido_id)===String(id))&&x.estado!=='pagada');
   if(cxcActiva){document.getElementById('cobro-content').innerHTML=`<div class="al al-warn"><div class="al-i">💰</div><div><div class="al-t">Pedido en Cuentas por Cobrar</div><div class="al-s">Este pedido fue enviado a CxC. Para cobrarlo, ve a la sección <b>CxC</b> y registra el pago desde allí.<br><br>Saldo pendiente: <b>${money(cxcActiva.saldo)}</b></div></div></div>`;const btn=document.getElementById('cobro-confirm-btn');if(btn)btn.style.display='none';cm('mo-ver');om('mo-cobro');return;}
   cobroId=id;cobroMode='pedido';document.getElementById('cobro-content').innerHTML=`<div style="margin-bottom:12px"><div style="font-size:.86rem;color:var(--ink2)">${p.cliente} — ${p.descr}</div><div style="font-family:Georgia,serif;font-size:1.3rem;color:var(--amber)">Restante: ${money(p.restante)}</div></div><div class="fg"><label class="fl">Monto a cobrar</label><input class="fc" id="cb-monto" type="number" value="${p.restante}"></div><div class="fg"><label class="fl">Método</label><select class="fc" id="cb-met"><option>Efectivo</option><option>Transferencia</option><option>Tarjeta</option><option value="credito">💰 A Crédito (CxC)</option><option>Otro</option></select></div>`;const btn=document.getElementById('cobro-confirm-btn');if(btn){btn.style.display='';btn.onclick=confirmCobro;}cm('mo-ver');om('mo-cobro');}
 function confirmCobro(){if(cobroMode==='venta'){confirmarCobroVenta();return;}const monto=N(document.getElementById('cb-monto').value);if(!monto||monto<=0){toast('❌ Monto inválido');return;}const metodo=document.getElementById('cb-met').value;const p=PEDS_DB().find(x=>x.id==cobroId);if(!p)return;if(metodo==='credito'){const cx={id:uid(),pedidoId:p.id,tercero:p.cliente,concepto:`Pedido: ${p.descr}`,monto,abonado:0,saldo:monto,estado:'pendiente',fecha:today(),vencimiento:null,notas:`Pedido #${p.id}`,created:new Date().toISOString()};if(!DB.cxc)DB.cxc=[];DB.cxc.push(cx);syncRow('cxc','write',cx,cx.id);toast('💰 Registrado en CxC');cm('mo-cobro');resetCobroModal();renderV(CUR);return;}p.restante=Math.max(0,N(p.restante)-monto);if(p.restante===0)p.pagado=true;p.updated=new Date().toISOString();syncRow('pedidos','update',p,p.id);const pg={id:uid(),pedidoId:p.id,cliente:p.cliente,monto,tipo:'cobro',fecha:today(),metodo,created:new Date().toISOString()};DB.pagos.push(pg);syncRow('pagos','write',pg,pg.id);cm('mo-cobro');resetCobroModal();if(can('imprimir')&&confirm('¿Imprimir recibo?'))generarReciboCobro(p.id,monto,metodo,p.restante);toast('✅ Cobro registrado');renderV(CUR);}
