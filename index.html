@@ -1332,8 +1332,11 @@ async function setEst(id,estado){
   if(estado==='cancelado'&&p.estado==='listo'){toast('❌ No se puede cancelar un pedido que ya está listo');return;}
   if(estado==='cancelado'&&!confirm('¿Cancelar este pedido?'))return;
   if(estado==='entregado'&&N(p.restante)>0){
-    const enCxc=(DB.cxc||[]).find(x=>String(x.pedidoId)===String(id)&&x.estado!=='pagada');
-    if(!enCxc){toast('❌ El pedido tiene saldo pendiente de RD$'+money(p.restante)+'. Cobra el saldo o envíalo a CxC antes de marcar como entregado.');return;}
+    const enCxc=(DB.cxc||[]).find(x=>(String(x.pedidoId)===String(id)||String(x.pedido_id)===String(id))&&x.estado!=='pagada');
+    if(!enCxc){
+      toast('❌ Balance pendiente de '+money(p.restante)+'. Cobra el total o envía a CxC primero.');
+      return;
+    }
   }
   p.estado=estado;p.updated=new Date().toISOString();
   syncRow('pedidos','update',p,p.id);
@@ -1564,7 +1567,17 @@ function recalcTotal(){
 }
 function showRecPrev(prod,qty){const ings=Array.isArray(prod.ings)?prod.ings:(typeof prod.ings==='string'?JSON.parse(prod.ings||'[]'):[]);const costoBase=ings.reduce((s,u)=>{const i=ING().find(x=>x.id==u.iid);return s+(i?.costo?i.costo*u.cant*qty:0);},0);const html=ings.map(u=>{const ing=ING().find(i=>i.id==u.iid);if(!ing)return'';const tc=R(u.cant*qty);const ok=ing.cant>=u.cant*qty;return`<div class="ic-row"><span class="ic-name">${ing.nombre}</span><span class="ic-qty" style="color:${ok?'var(--amber)':'var(--danger)'}">${tc}</span><span class="ic-unit">${ing.unidad}</span><span class="ic-stock ${ok?'ok':'lo'}">${ok?'✓':'⚠️'}</span></div>`;}).join('');const pb=N(prod.precio)*qty;document.getElementById('rec-prev-list').innerHTML=html+`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px;margin-top:4px;background:rgba(201,124,30,.08);border-radius:8px;border:1px solid rgba(201,124,30,.2)"><span style="font-size:.74rem;font-weight:700;color:var(--ink2)">💵 Precio base (${qty} × ${money(prod.precio)})</span><span style="font-size:.88rem;font-weight:700;color:var(--amber)">${money(pb)}</span></div>${costoBase>0?`<div style="font-size:.68rem;color:var(--ink3);text-align:right;margin-top:3px">Costo: ${money(costoBase)}</div>`:''}`; document.getElementById('rec-prev').style.display='block';}
 function calcRest(){const t=N(document.getElementById('f-total').value),a=N(document.getElementById('f-anticipo').value);document.getElementById('f-rest').value=money(Math.max(0,t-a));}
-function savePed(){const cli=document.getElementById('f-cli').value.trim(),descr=document.getElementById('f-desc').value.trim(),fecha=document.getElementById('f-fecha').value,total=N(document.getElementById('f-total').value);if(!cli||!descr||!fecha||!total){toast('❌ Completa los campos requeridos');return;}const lim=parseInt(CFG.limitePedidos)||0,eid0=parseInt(document.getElementById('f-edit-id').value)||0;if(lim>0&&!eid0){const pf=PEDS_DB().filter(p=>normFecha(p.fecha)===fecha&&p.estado!=='cancelado').length;if(pf>=lim){toast(`❌ Límite de ${lim} pedidos alcanzado`);return;}}const pedProds=getPedProds();const recId=pedProds.length===1?pedProds[0].recId:null;const qty=pedProds.length===1?pedProds[0].qty:(parseInt(document.getElementById('f-qty').value)||1);const ant=N(document.getElementById('f-anticipo').value)||0;let ingsCalc=[];pedProds.forEach(({recId:rid,qty:q})=>{const prod=PRODS_DB().find(p=>p.id==rid);if(!prod)return;parseArr(prod.ings).forEach(u=>ingsCalc.push({iid:u.iid,cant:u.cant*q}));});const extras=[];for(let n=0;n<ecCnt;n++){const ie=document.getElementById(`ec-i-${n}`);const ce=document.getElementById(`ec-c-${n}`);if(!ie||!ce)continue;const cant=N(ce.value);if(!cant)continue;const ingE=ING().find(i=>i.id==ie.value)||{};extras.push({iid:parseInt(ie.value),cant,nombre:ingE.nombre||'',unidad:ingE.unidad||'',precioVenta:N(ingE.precioVenta)||N(ingE.costo)||0});}const eid=parseInt(document.getElementById('f-edit-id').value)||0;
+function savePed(){const cli=document.getElementById('f-cli').value.trim(),descr=document.getElementById('f-desc').value.trim(),fecha=document.getElementById('f-fecha').value,total=N(document.getElementById('f-total').value);if(!cli||!descr||!fecha||!total){toast('❌ Completa los campos requeridos');return;}
+  const lim=parseInt(CFG.limitePedidos)||0;
+  const eid0=parseInt(document.getElementById('f-edit-id').value)||0;
+  if(lim>0){
+    const pedOrig=eid0?PEDS_DB().find(x=>x.id==eid0):null;
+    const fechaCambio=pedOrig?normFecha(pedOrig.fecha)!==normFecha(fecha):true;
+    if(!eid0||fechaCambio){
+      const pf=PEDS_DB().filter(p=>normFecha(p.fecha)===fecha&&p.estado!=='cancelado'&&p.id!=eid0).length;
+      if(pf>=lim){toast(`❌ Límite de ${lim} pedidos para ${fDate(fecha)}. Ya hay ${pf} pedido(s).`);return;}
+    }
+  }const pedProds=getPedProds();const recId=pedProds.length===1?pedProds[0].recId:null;const qty=pedProds.length===1?pedProds[0].qty:(parseInt(document.getElementById('f-qty').value)||1);const ant=N(document.getElementById('f-anticipo').value)||0;let ingsCalc=[];pedProds.forEach(({recId:rid,qty:q})=>{const prod=PRODS_DB().find(p=>p.id==rid);if(!prod)return;parseArr(prod.ings).forEach(u=>ingsCalc.push({iid:u.iid,cant:u.cant*q}));});const extras=[];for(let n=0;n<ecCnt;n++){const ie=document.getElementById(`ec-i-${n}`);const ce=document.getElementById(`ec-c-${n}`);if(!ie||!ce)continue;const cant=N(ce.value);if(!cant)continue;const ingE=ING().find(i=>i.id==ie.value)||{};extras.push({iid:parseInt(ie.value),cant,nombre:ingE.nombre||'',unidad:ingE.unidad||'',precioVenta:N(ingE.precioVenta)||N(ingE.costo)||0});}const eid=parseInt(document.getElementById('f-edit-id').value)||0;
   if(eid){
     const p=PEDS_DB().find(x=>x.id==eid);
     if(p){
