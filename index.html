@@ -1453,7 +1453,18 @@ function confirmListo(){
    ENTREGA & COBRO
 ═══════════════════════════════════════ */
 let entregaId=null,entExtCnt=0;
-function openEntrega(id){const p=PEDS_DB().find(x=>x.id==id);if(!p)return;entregaId=id;entExtCnt=0;document.getElementById('entrega-extras').innerHTML='';document.getElementById('ee-costo').value='0';document.getElementById('ee-cargo').value='0';cm('mo-ver');om('mo-entrega');}
+function openEntrega(id){
+  const p=PEDS_DB().find(x=>x.id==id);if(!p)return;
+  // Validar balance pendiente
+  if(N(p.restante)>0){
+    const enCxc=(DB.cxc||[]).find(x=>(String(x.pedidoId||x.pedido_id)===String(id))&&x.estado!=='pagada');
+    if(!enCxc){
+      toast('⚠️ Cobro pendiente — Saldo de '+money(p.restante)+' sin cobrar y sin CxC. Cobra o envía a CxC primero.');
+      return;
+    }
+  }
+  entregaId=id;entExtCnt=0;document.getElementById('entrega-extras').innerHTML='';document.getElementById('ee-costo').value='0';document.getElementById('ee-cargo').value='0';cm('mo-ver');om('mo-entrega');
+}
 function confirmEntrega(){const p=PEDS_DB().find(x=>x.id==entregaId);if(!p)return;const extras=[],movs=[];for(let n=0;n<entExtCnt;n++){const ie=document.getElementById(`ee-i-${n}`);const ce=document.getElementById(`ee-c-${n}`);if(!ie||!ce)continue;const cant=N(ce.value);if(!cant)continue;const ing=ING().find(i=>i.id==ie.value);if(!ing)continue;ing.cant=Math.max(0,ing.cant-cant);extras.push({iid:ing.id,cant,tipo:'extra-entrega'});movs.push({id:uid(),tipo:'salida',nombre:ing.nombre,cant,costo:0,notas:`Extra entrega #${p.id}`,fecha:new Date().toISOString(),ref:String(p.id)});syncRow('inventario','update',ing,ing.id);}const cargo=N(document.getElementById('ee-cargo').value);if(cargo>0){p.total=N(p.total)+cargo;p.restante=N(p.restante)+cargo;}p.extrasEntrega=extras;p.costoExtraEntrega=N(document.getElementById('ee-costo').value);p.estado='entregado';p.updated=new Date().toISOString();movs.forEach(m=>{DB.movimientos.push(m);syncRow('movimientos','write',m,m.id);});syncRow('pedidos','update',p,p.id);cm('mo-entrega');toast('📦 Entrega confirmada');renderV(CUR);}
 let cobroId=null,cobroMode='pedido';
 function resetCobroModal(){cobroMode='pedido';const btn=document.getElementById('cobro-confirm-btn');if(btn){btn.style.display='';btn.textContent='✅ Confirmar';btn.onclick=confirmCobro;}}
