@@ -955,6 +955,10 @@ async function syncRow(table,action,data,id){
       // Solo lo enviamos en tablas que lo usan explícitamente como campo de negocio
       const tablesWithUpdated=['pedidos','inventario','cxc','cxp','solicitudes','perfiles','config'];
       if(!tablesWithUpdated.includes(table))delete payload.updated;
+      // estatus column - strip if not yet in DB (run ALTER TABLE to enable)
+      // For tables that need it: inventario and productos - keep it; others strip
+      const tablesWithEstatus=['inventario','productos'];
+      if(!tablesWithEstatus.includes(table))delete payload.estatus;
       // camelCase → snake_case para columnas especiales
       if('precioVenta' in payload){payload.precio_venta=payload.precioVenta;delete payload.precioVenta;}
       if('pedidoId' in payload){payload.pedido_id=payload.pedidoId;delete payload.pedidoId;}
@@ -1478,11 +1482,13 @@ function confirmEntrega(){const p=PEDS_DB().find(x=>x.id==entregaId);if(!p)retur
 let cobroId=null,cobroMode='pedido';
 function resetCobroModal(){cobroMode='pedido';const btn=document.getElementById('cobro-confirm-btn');if(btn){btn.style.display='';btn.textContent='✅ Confirmar';btn.onclick=confirmCobro;}}
 function openCobro(id){const p=PEDS_DB().find(x=>x.id==id);if(!p)return;
+  if(p.estado==='cancelado'){toast('❌ No se puede cobrar un pedido cancelado');return;}
   // Verificar si ya hay una CxC activa para este pedido
   const cxcActiva=(DB.cxc||[]).find(x=>(String(x.pedidoId||x.pedido_id)===String(id))&&x.estado!=='pagada');
   if(cxcActiva){document.getElementById('cobro-content').innerHTML=`<div class="al al-warn"><div class="al-i">💰</div><div><div class="al-t">Pedido en Cuentas por Cobrar</div><div class="al-s">Este pedido fue enviado a CxC. Para cobrarlo, ve a la sección <b>CxC</b> y registra el pago desde allí.<br><br>Saldo pendiente: <b>${money(cxcActiva.saldo)}</b></div></div></div>`;const btn=document.getElementById('cobro-confirm-btn');if(btn)btn.style.display='none';cm('mo-ver');om('mo-cobro');return;}
   cobroId=id;cobroMode='pedido';document.getElementById('cobro-content').innerHTML=`<div style="margin-bottom:12px"><div style="font-size:.86rem;color:var(--ink2)">${p.cliente} — ${p.descr}</div><div style="font-family:Georgia,serif;font-size:1.3rem;color:var(--amber)">Restante: ${money(p.restante)}</div></div><div class="fg"><label class="fl">Monto a cobrar</label><input class="fc" id="cb-monto" type="number" value="${p.restante}"></div><div class="fg"><label class="fl">Método</label><select class="fc" id="cb-met"><option>Efectivo</option><option>Transferencia</option><option>Tarjeta</option><option value="credito">💰 A Crédito (CxC)</option><option>Otro</option></select></div>`;const btn=document.getElementById('cobro-confirm-btn');if(btn){btn.style.display='';btn.onclick=confirmCobro;}cm('mo-ver');om('mo-cobro');}
-function confirmCobro(){if(cobroMode==='venta'){confirmarCobroVenta();return;}const monto=N(document.getElementById('cb-monto').value);if(!monto||monto<=0){toast('❌ Monto inválido');return;}const metodo=document.getElementById('cb-met').value;const p=PEDS_DB().find(x=>x.id==cobroId);if(!p)return;if(metodo==='credito'){const cx={id:uid(),pedidoId:p.id,tercero:p.cliente,concepto:`Pedido: ${p.descr}`,monto,abonado:0,saldo:monto,estado:'pendiente',fecha:today(),vencimiento:null,notas:`Pedido #${p.id}`,created:new Date().toISOString()};if(!DB.cxc)DB.cxc=[];DB.cxc.push(cx);syncRow('cxc','write',cx,cx.id);toast('💰 Registrado en CxC');cm('mo-cobro');resetCobroModal();renderV(CUR);return;}p.restante=Math.max(0,N(p.restante)-monto);if(p.restante===0)p.pagado=true;p.updated=new Date().toISOString();syncRow('pedidos','update',p,p.id);const pg={id:uid(),pedidoId:p.id,cliente:p.cliente,monto,tipo:'cobro',fecha:today(),metodo,created:new Date().toISOString()};DB.pagos.push(pg);syncRow('pagos','write',pg,pg.id);cm('mo-cobro');resetCobroModal();if(can('imprimir')&&confirm('¿Imprimir recibo?'))generarReciboCobro(p.id,monto,metodo,p.restante);toast('✅ Cobro registrado');renderV(CUR);}
+function confirmCobro(){if(cobroMode==='venta'){confirmarCobroVenta();return;}const monto=N(document.getElementById('cb-monto').value);if(!monto||monto<=0){toast('❌ Monto inválido');return;}
+  if(monto>N(p.restante)&&cobroMode!=='venta'){toast('❌ El monto ('+money(monto)+') supera el saldo pendiente ('+money(p.restante)+')');return;}const metodo=document.getElementById('cb-met').value;const p=PEDS_DB().find(x=>x.id==cobroId);if(!p)return;if(metodo==='credito'){const cx={id:uid(),pedidoId:p.id,tercero:p.cliente,concepto:`Pedido: ${p.descr}`,monto,abonado:0,saldo:monto,estado:'pendiente',fecha:today(),vencimiento:null,notas:`Pedido #${p.id}`,created:new Date().toISOString()};if(!DB.cxc)DB.cxc=[];DB.cxc.push(cx);syncRow('cxc','write',cx,cx.id);toast('💰 Registrado en CxC');cm('mo-cobro');resetCobroModal();renderV(CUR);return;}p.restante=Math.max(0,N(p.restante)-monto);if(p.restante===0)p.pagado=true;p.updated=new Date().toISOString();syncRow('pedidos','update',p,p.id);const pg={id:uid(),pedidoId:p.id,cliente:p.cliente,monto,tipo:'cobro',fecha:today(),metodo,created:new Date().toISOString()};DB.pagos.push(pg);syncRow('pagos','write',pg,pg.id);cm('mo-cobro');resetCobroModal();if(can('imprimir')&&confirm('¿Imprimir recibo?'))generarReciboCobro(p.id,monto,metodo,p.restante);toast('✅ Cobro registrado');renderV(CUR);}
 
 /* ═══════════════════════════════════════
    PEDIDO FORM
@@ -1526,7 +1532,13 @@ function addPedProd(preRecId,preQty){
   const n=pedProdCnt++;
   const div=document.createElement('div');div.id='pp-row-'+n;
   div.style.cssText='display:grid;grid-template-columns:1fr 70px 28px;gap:5px;align-items:center;margin-bottom:5px;';
-  div.innerHTML='<select id="pp-rec-'+n+'" class="fc" style="font-size:.78rem;padding:6px 8px;" onchange="recalcTotal();updateDescFromProds()"><option value="">— Sin vincular —</option>'+PRODS_ASC().filter(p=>!p.estatus||p.estatus==='activo').map(p=>'<option value="'+p.id+'"'+(String(p.id)===String(preRecId)?' selected':'')+'>'+p.nombre+' — '+money(p.precio)+'</option>').join('')+'</select>'
+  // If preRecId is set (editing), include that product even if inactive
+  const prodsForSel=PRODS_ASC().filter(p=>(!p.estatus||p.estatus==='activo')||String(p.id)===String(preRecId));
+  const isPreInactive=preRecId?((PRODS_DB().find(x=>String(x.id)===String(preRecId))?.estatus||'activo')==='inactivo'):false;
+  div.innerHTML='<select id="pp-rec-'+n+'" class="fc" style="font-size:.78rem;padding:6px 8px;'+(isPreInactive?'border-color:var(--warn);':'')+'" onchange="recalcTotal();updateDescFromProds()" '+(isPreInactive?'data-inactive="1"':'')+'>'+
+    '<option value="">— Sin vincular —</option>'+
+    prodsForSel.map(p=>{const inact=p.estatus==='inactivo';return'<option value="'+p.id+'"'+(String(p.id)===String(preRecId)?' selected':'')+
+    (inact?' style="color:var(--danger)"':'')+'>'+p.nombre+(inact?' ⛔ (inactivo)':'')+' — '+money(p.precio)+'</option>';}).join('')+'</select>'
     +'<input type="number" min="1" value="'+(preQty||1)+'" id="pp-qty-'+n+'" class="fc" style="font-size:.8rem;padding:6px 8px;text-align:center" oninput="recalcTotal();updateDescFromProds()">'
     +'<button onclick="document.getElementById(\'pp-row-'+n+'\').remove();recalcTotal();updateDescFromProds()" style="background:rgba(192,48,42,.1);border:none;color:var(--danger);border-radius:8px;width:28px;height:30px;cursor:pointer;font-size:.82rem">✕</button>';
   wrap.appendChild(div);
@@ -1590,6 +1602,23 @@ function recalcTotal(){
 function showRecPrev(prod,qty){const ings=Array.isArray(prod.ings)?prod.ings:(typeof prod.ings==='string'?JSON.parse(prod.ings||'[]'):[]);const costoBase=ings.reduce((s,u)=>{const i=ING().find(x=>x.id==u.iid);return s+(i?.costo?i.costo*u.cant*qty:0);},0);const html=ings.map(u=>{const ing=ING().find(i=>i.id==u.iid);if(!ing)return'';const tc=R(u.cant*qty);const ok=ing.cant>=u.cant*qty;return`<div class="ic-row"><span class="ic-name">${ing.nombre}</span><span class="ic-qty" style="color:${ok?'var(--amber)':'var(--danger)'}">${tc}</span><span class="ic-unit">${ing.unidad}</span><span class="ic-stock ${ok?'ok':'lo'}">${ok?'✓':'⚠️'}</span></div>`;}).join('');const pb=N(prod.precio)*qty;document.getElementById('rec-prev-list').innerHTML=html+`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px;margin-top:4px;background:rgba(201,124,30,.08);border-radius:8px;border:1px solid rgba(201,124,30,.2)"><span style="font-size:.74rem;font-weight:700;color:var(--ink2)">💵 Precio base (${qty} × ${money(prod.precio)})</span><span style="font-size:.88rem;font-weight:700;color:var(--amber)">${money(pb)}</span></div>${costoBase>0?`<div style="font-size:.68rem;color:var(--ink3);text-align:right;margin-top:3px">Costo: ${money(costoBase)}</div>`:''}`; document.getElementById('rec-prev').style.display='block';}
 function calcRest(){const t=N(document.getElementById('f-total').value),a=N(document.getElementById('f-anticipo').value);if(a>t&&t>0){document.getElementById('f-anticipo').value=t;toast('⚠️ El anticipo no puede superar el total');document.getElementById('f-rest').value=money(0);return;}document.getElementById('f-rest').value=money(Math.max(0,t-a));}
 function savePed(){const cli=document.getElementById('f-cli').value.trim(),descr=document.getElementById('f-desc').value.trim(),fecha=document.getElementById('f-fecha').value,total=N(document.getElementById('f-total').value);if(!cli||!descr||!fecha||!total){toast('❌ Completa los campos requeridos');return;}
+  // Validate inactive ingredients on NEW pedido
+  if(!eid0){
+    const ingInactivos=[];
+    getPedProds().forEach(({recId})=>{
+      const prod=PRODS_DB().find(p=>p.id==recId);if(!prod)return;
+      parseArr(prod.ings).forEach(u=>{const ing=ING().find(i=>i.id==u.iid);if(ing&&ing.estatus==='inactivo')ingInactivos.push(ing.nombre+' ('+prod.nombre+')');});
+    });
+    if(ingInactivos.length>0){toast('❌ Ingredientes inactivos: '+[...new Set(ingInactivos)].slice(0,3).join(', '));return;}
+  }
+  // Validate: editing - inactive products cannot have qty increased
+  if(eid0){
+    const origPed=PEDS_DB().find(p=>p.id==eid0);
+    const origProds=origPed?parseArr(origPed.pedProds||origPed.ped_prods):[];
+    let blocked=false;
+    getPedProds().forEach(({recId,qty})=>{const prod=PRODS_DB().find(p=>p.id==recId);if(!prod||!prod.estatus||prod.estatus==='activo')return;const origP=origProds.find(pp=>String(pp.recId)===String(recId));const origQty=origP?origP.qty:0;if(qty>origQty){toast('❌ "'+prod.nombre+'" está inactivo. No puedes aumentar la cantidad (original: '+origQty+')');blocked=true;}});
+    if(blocked)return;
+  }
   const lim=parseInt(CFG.limitePedidos)||0;
   const eid0=parseInt(document.getElementById('f-edit-id').value)||0;
   if(lim>0){
@@ -1603,7 +1632,7 @@ function savePed(){const cli=document.getElementById('f-cli').value.trim(),descr
   if(eid){
     const p=PEDS_DB().find(x=>x.id==eid);
     if(p){
-      Object.assign(p,{cliente:cli,telefono:document.getElementById('f-tel').value,descr,qty,total,anticipo:ant,restante:total-ant,fecha,hora:document.getElementById('f-hora').value,estado:document.getElementById('f-estado').value,notas:document.getElementById('f-notas').value,recId,ingsCalc,pedProds:pedProds,extrasCreate:extras,updated:new Date().toISOString()});
+      Object.assign(p,{cliente:cli,telefono:document.getElementById('f-tel').value,descr,qty,total,anticipo:ant,restante:total-ant,fecha,hora:document.getElementById('f-hora').value,notas:document.getElementById('f-notas').value,recId,ingsCalc,pedProds:pedProds,extrasCreate:extras,updated:new Date().toISOString()});// estado NO se actualiza en edición
       syncRow('pedidos','update',p,p.id);
       // Actualizar anticipo: si cambió, actualizar o crear pago
       const antMetodoEdit=document.getElementById('f-ant-metodo')?.value||'Efectivo';
@@ -1653,6 +1682,8 @@ function copiarPedido(id){
 
 function openEditPed(id){
   const p=PEDS_DB().find(x=>x.id==id);if(!p)return;
+  if(p.estado==='entregado'){toast('❌ No se puede editar un pedido entregado');return;}
+  if(p.estado==='cancelado'){toast('❌ No se puede editar un pedido cancelado');return;}
   resetPedForm();cm('mo-ver');
   document.getElementById('ped-titulo').textContent='Editar Pedido';
   document.getElementById('f-edit-id').value=id;
@@ -1662,6 +1693,9 @@ function openEditPed(id){
   document.getElementById('f-qty').value=p.qty;
   document.getElementById('f-total').value=p.total;
   document.getElementById('f-anticipo').value=p.anticipo;
+  // Load anticipo payment method from existing pago
+  const pgAnt=(DB.pagos||[]).find(pg=>(String(pg.pedidoId||pg.pedido_id)===String(id))&&pg.tipo==='anticipo');
+  const amEl=document.getElementById('f-ant-metodo');if(amEl&&pgAnt)amEl.value=pgAnt.metodo||'Efectivo';
   document.getElementById('f-rest').value=money(p.restante);
   document.getElementById('f-fecha').value=p.fecha;
   document.getElementById('f-hora').value=p.hora||'';
@@ -1865,10 +1899,10 @@ function imprimirVentasDia(fechaParam){
   const ventasHoy=(DB.ventas||[]).filter(v=>normFecha(v.fecha)===h);
   // Pedidos que recibieron algún pago hoy
   const pedidosPagosHoy=[];
+  const pagosIngreso=pagosHoy.filter(p=>p.tipo!=='cxp-pago'&&N(p.monto)>0);
   const pedidosConPagoHoy=new Set(pagosIngreso.filter(p=>['anticipo','cobro','cxc-cobro'].includes(p.tipo)).map(p=>String(p.pedidoId||p.pedido_id)));
   pedidosConPagoHoy.forEach(pid=>{const p=PEDS_DB().find(x=>String(x.id)===pid);if(p)pedidosPagosHoy.push(p);});
   const pagosCxpHoy=pagosHoy.filter(p=>p.tipo==='cxp-pago');
-  const pagosIngreso=pagosHoy.filter(p=>p.tipo!=='cxp-pago'&&N(p.monto)>0);
   const totalPagosPed=pagosIngreso.filter(p=>['anticipo','cobro','cxc-cobro'].includes(p.tipo)).reduce((s,p)=>s+N(p.monto),0);
   const totalPagosCaja=pagosIngreso.filter(p=>p.tipo==='venta-caja').reduce((s,p)=>s+N(p.monto),0);
   const totalIngresos=totalPagosPed+totalPagosCaja;
