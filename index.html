@@ -1602,7 +1602,8 @@ function recalcTotal(){
 function showRecPrev(prod,qty){const ings=Array.isArray(prod.ings)?prod.ings:(typeof prod.ings==='string'?JSON.parse(prod.ings||'[]'):[]);const costoBase=ings.reduce((s,u)=>{const i=ING().find(x=>x.id==u.iid);return s+(i?.costo?i.costo*u.cant*qty:0);},0);const html=ings.map(u=>{const ing=ING().find(i=>i.id==u.iid);if(!ing)return'';const tc=R(u.cant*qty);const ok=ing.cant>=u.cant*qty;return`<div class="ic-row"><span class="ic-name">${ing.nombre}</span><span class="ic-qty" style="color:${ok?'var(--amber)':'var(--danger)'}">${tc}</span><span class="ic-unit">${ing.unidad}</span><span class="ic-stock ${ok?'ok':'lo'}">${ok?'✓':'⚠️'}</span></div>`;}).join('');const pb=N(prod.precio)*qty;document.getElementById('rec-prev-list').innerHTML=html+`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px;margin-top:4px;background:rgba(201,124,30,.08);border-radius:8px;border:1px solid rgba(201,124,30,.2)"><span style="font-size:.74rem;font-weight:700;color:var(--ink2)">💵 Precio base (${qty} × ${money(prod.precio)})</span><span style="font-size:.88rem;font-weight:700;color:var(--amber)">${money(pb)}</span></div>${costoBase>0?`<div style="font-size:.68rem;color:var(--ink3);text-align:right;margin-top:3px">Costo: ${money(costoBase)}</div>`:''}`; document.getElementById('rec-prev').style.display='block';}
 function calcRest(){const t=N(document.getElementById('f-total').value),a=N(document.getElementById('f-anticipo').value);if(a>t&&t>0){document.getElementById('f-anticipo').value=t;toast('⚠️ El anticipo no puede superar el total');document.getElementById('f-rest').value=money(0);return;}document.getElementById('f-rest').value=money(Math.max(0,t-a));}
 function savePed(){const cli=document.getElementById('f-cli').value.trim(),descr=document.getElementById('f-desc').value.trim(),fecha=document.getElementById('f-fecha').value,total=N(document.getElementById('f-total').value);if(!cli||!descr||!fecha||!total){toast('❌ Completa los campos requeridos');return;}
-  // Validate inactive ingredients on NEW pedido
+  const eid0=parseInt(document.getElementById('f-edit-id').value)||0;
+  // Validate inactive ingredients on NEW pedido (not edit, not copy)
   if(!eid0){
     const ingInactivos=[];
     getPedProds().forEach(({recId})=>{
@@ -1620,7 +1621,6 @@ function savePed(){const cli=document.getElementById('f-cli').value.trim(),descr
     if(blocked)return;
   }
   const lim=parseInt(CFG.limitePedidos)||0;
-  const eid0=parseInt(document.getElementById('f-edit-id').value)||0;
   if(lim>0){
     const pedOrig=eid0?PEDS_DB().find(x=>x.id==eid0):null;
     const fechaCambio=pedOrig?normFecha(pedOrig.fecha)!==normFecha(fecha):true;
@@ -1664,7 +1664,7 @@ function copiarPedido(id){
   document.getElementById('f-edit-id').value=''; // nuevo pedido
   // Cargar productos
   const pedProdsCopy=parseArr(p.pedProds||p.ped_prods);
-  if(pedProdsCopy.length>0){pedProdsCopy.forEach(({recId,qty})=>{if(recId)addPedProd(recId,qty||1);});}
+  if(pedProdsCopy.length>0){pedProdsCopy.forEach(({recId,qty})=>{if(!recId)return;const prod=PRODS_DB().find(p=>p.id==recId);if(prod&&prod.estatus==='inactivo'){toast('⚠️ Producto inactivo omitido: '+prod.nombre);return;}addPedProd(recId,qty||1);});}
   else if(p.recId||p.rec_id){addPedProd(p.recId||p.rec_id,p.qty||1);}
   // Cargar extras
   const extrasCopy=parseArr(p.extrasCreate);
