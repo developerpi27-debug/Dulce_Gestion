@@ -705,7 +705,7 @@ const ECF_TIPOS_DGII=[
    STORAGE & STATE
 ═══════════════════════════════════════ */
 const LS={g:(k,d)=>{try{return JSON.parse(localStorage.getItem(k))??d}catch{return d}},s:(k,v)=>localStorage.setItem(k,JSON.stringify(v))};
-let DB={config:[],usuarios:[],perfiles:[],pedidos:[],inventario:[],productos:[],movimientos:[],cotizaciones:[],gastos:[],pagos:[],ventas:[],solicitudes:[],extras_pedidos:[],cxp:[],cxc:[]};
+let DB={config:[],usuarios:[],perfiles:[],pedidos:[],inventario:[],productos:[],movimientos:[],cotizaciones:[],gastos:[],pagos:[],ventas:[],solicitudes:[],facturas:[],extras_pedidos:[],cxp:[],cxc:[]};
 let CFG=LS.g('dg_cfg',{nombre:'DulceGestión',eslogan:'',tel:'',email:'',dir:'',redes:'',nit:'',moneda:'RD$',pie:'Gracias por su preferencia.',condiciones:'50% anticipo, saldo contra entrega.',gracias:'¡Gracias por confiar en nosotros!',prefix:'FAC-',facnum:1,licFecha:'',licDias:7,limitePedidos:0,wsNumero:'',refreshInterval:20,inactivityTimeout:0});
 let ECF=LS.g('dg_ecf',{rnc:'',nombreCom:'',regimen:'ordinario',tiposHabilitados:['32','31'],secuencias:{'31':1,'32':1,'33':1,'34':1},rangos:[],itbis:18});
 let SUPABASE_URL=LS.g('dg_url','');
@@ -1488,7 +1488,8 @@ function openCobro(id){const p=PEDS_DB().find(x=>x.id==id);if(!p)return;
   if(cxcActiva){document.getElementById('cobro-content').innerHTML=`<div class="al al-warn"><div class="al-i">💰</div><div><div class="al-t">Pedido en Cuentas por Cobrar</div><div class="al-s">Este pedido fue enviado a CxC. Para cobrarlo, ve a la sección <b>CxC</b> y registra el pago desde allí.<br><br>Saldo pendiente: <b>${money(cxcActiva.saldo)}</b></div></div></div>`;const btn=document.getElementById('cobro-confirm-btn');if(btn)btn.style.display='none';cm('mo-ver');om('mo-cobro');return;}
   cobroId=id;cobroMode='pedido';document.getElementById('cobro-content').innerHTML=`<div style="margin-bottom:12px"><div style="font-size:.86rem;color:var(--ink2)">${p.cliente} — ${p.descr}</div><div style="font-family:Georgia,serif;font-size:1.3rem;color:var(--amber)">Restante: ${money(p.restante)}</div></div><div class="fg"><label class="fl">Monto a cobrar</label><input class="fc" id="cb-monto" type="number" value="${p.restante}"></div><div class="fg"><label class="fl">Método</label><select class="fc" id="cb-met"><option>Efectivo</option><option>Transferencia</option><option>Tarjeta</option><option value="credito">💰 A Crédito (CxC)</option><option>Otro</option></select></div>`;const btn=document.getElementById('cobro-confirm-btn');if(btn){btn.style.display='';btn.onclick=confirmCobro;}cm('mo-ver');om('mo-cobro');}
 function confirmCobro(){if(cobroMode==='venta'){confirmarCobroVenta();return;}const monto=N(document.getElementById('cb-monto').value);if(!monto||monto<=0){toast('❌ Monto inválido');return;}
-  if(monto>N(p.restante)&&cobroMode!=='venta'){toast('❌ El monto ('+money(monto)+') supera el saldo pendiente ('+money(p.restante)+')');return;}const metodo=document.getElementById('cb-met').value;const p=PEDS_DB().find(x=>x.id==cobroId);if(!p)return;if(metodo==='credito'){const cx={id:uid(),pedidoId:p.id,tercero:p.cliente,concepto:`Pedido: ${p.descr}`,monto,abonado:0,saldo:monto,estado:'pendiente',fecha:today(),vencimiento:null,notas:`Pedido #${p.id}`,created:new Date().toISOString()};if(!DB.cxc)DB.cxc=[];DB.cxc.push(cx);syncRow('cxc','write',cx,cx.id);toast('💰 Registrado en CxC');cm('mo-cobro');resetCobroModal();renderV(CUR);return;}p.restante=Math.max(0,N(p.restante)-monto);if(p.restante===0)p.pagado=true;p.updated=new Date().toISOString();syncRow('pedidos','update',p,p.id);const pg={id:uid(),pedidoId:p.id,cliente:p.cliente,monto,tipo:'cobro',fecha:today(),metodo,created:new Date().toISOString()};DB.pagos.push(pg);syncRow('pagos','write',pg,pg.id);cm('mo-cobro');resetCobroModal();if(can('imprimir')&&confirm('¿Imprimir recibo?'))generarReciboCobro(p.id,monto,metodo,p.restante);toast('✅ Cobro registrado');renderV(CUR);}
+  const p=PEDS_DB().find(x=>x.id==cobroId);if(!p)return;
+  if(monto>N(p.restante)&&cobroMode!=='venta'){toast('❌ El monto ('+money(monto)+') supera el saldo pendiente ('+money(p.restante)+')');return;}const metodo=document.getElementById('cb-met').value;if(metodo==='credito'){const cx={id:uid(),pedidoId:p.id,tercero:p.cliente,concepto:`Pedido: ${p.descr}`,monto,abonado:0,saldo:monto,estado:'pendiente',fecha:today(),vencimiento:null,notas:`Pedido #${p.id}`,created:new Date().toISOString()};if(!DB.cxc)DB.cxc=[];DB.cxc.push(cx);syncRow('cxc','write',cx,cx.id);toast('💰 Registrado en CxC');cm('mo-cobro');resetCobroModal();renderV(CUR);return;}p.restante=Math.max(0,N(p.restante)-monto);if(p.restante===0)p.pagado=true;p.updated=new Date().toISOString();syncRow('pedidos','update',p,p.id);const pg={id:uid(),pedidoId:p.id,cliente:p.cliente,monto,tipo:'cobro',fecha:today(),metodo,created:new Date().toISOString()};DB.pagos.push(pg);syncRow('pagos','write',pg,pg.id);cm('mo-cobro');resetCobroModal();if(can('imprimir')&&confirm('¿Imprimir recibo?'))generarReciboCobro(p.id,monto,metodo,p.restante);toast('✅ Cobro registrado');renderV(CUR);}
 
 /* ═══════════════════════════════════════
    PEDIDO FORM
@@ -1558,7 +1559,7 @@ function updateDescFromProds(){
   if(!prods.length)return;
   const desc=prods.map(({recId,qty})=>{const p=PRODS_DB().find(x=>x.id==recId);return p?(qty>1?qty+'x ':'')+p.nombre:'';}).filter(Boolean).join(', ');
   const fd=document.getElementById('f-desc');
-  if(fd&&(!fd.value||fd.dataset.autoSet==='1')){fd.value=desc;fd.dataset.autoSet='1';}
+  if(fd)fd.value=desc; // always update (edit/copy/create)
 }
 function onRecSel(){recalcTotal();updateDescFromProds();}
 function onQtyChange(){recalcTotal();}
@@ -2085,15 +2086,29 @@ function renderRep(tab){
       ${comprasMesPnl.length?`<div style="font-size:.72rem;font-weight:700;color:var(--ink3);margin:8px 0 4px">🛒 COMPRAS</div>`+comprasMesPnl.map(m=>`<div class="li"><div class="la bg-c">🛒</div><div class="lb"><div class="lt">${m.nombre}</div><div class="ls">${R(m.cant)} · ${new Date(m.fecha).toLocaleDateString('es')}</div></div><div class="lm"><div class="lamt" style="color:var(--rust2)">${money(m.costo)}</div></div></div>`).join(''):''}
     </div>`;
   } else if(tab==='productos'){
-    const cntPed={};PEDS_DB().filter(p=>p.estado!=='cancelado'&&normFecha(p.fecha).startsWith(filtMes)).forEach(p=>{const k=(p.descr||'').split(' ').slice(0,4).join(' ').trim();if(k)cntPed[k]=(cntPed[k]||0)+N(p.total);});
-    const cntCaja={};(DB.ventas||[]).filter(v=>normFecha(v.fecha).startsWith(filtMes)).forEach(v=>{const items=Array.isArray(v.items)?v.items:(typeof v.items==='string'?JSON.parse(v.items||'[]'):[]);items.forEach(i=>{const k=(i.nombre||'').split(' ').slice(0,4).join(' ').trim();if(k)cntCaja[k]=(cntCaja[k]||0)+N(i.precio)*N(i.cant);});});
-    const cnt={...cntPed};Object.entries(cntCaja).forEach(([k,v])=>{cnt[k]=(cnt[k]||0)+v;});
-    const sorted=Object.entries(cnt).sort((a,b)=>b[1]-a[1]).slice(0,10);const mx=sorted[0]?.[1]||1;
+    // Count by individual product name and quantity sold
+    const cntProd={};
+    // From pedidos: use pedProds for multi-product, fallback to descr for single
+    PEDS_DB().filter(p=>p.estado!=='cancelado'&&normFecha(p.fecha).startsWith(filtMes)).forEach(p=>{
+      const pp=parseArr(p.pedProds||p.ped_prods);
+      if(pp.length>0){
+        pp.forEach(({recId,qty})=>{const prod=PRODS_DB().find(x=>x.id==recId);if(prod){const k=prod.nombre;cntProd[k]=(cntProd[k]||0)+N(qty);}});
+      } else if(p.recId){
+        const prod=PRODS_DB().find(x=>x.id==p.recId);const k=prod?prod.nombre:(p.descr||'').trim();if(k)cntProd[k]=(cntProd[k]||0)+N(p.qty||1);
+      } else if(p.descr){cntProd[p.descr.trim()]=(cntProd[p.descr.trim()]||0)+1;}
+    });
+    // From ventas caja: count by item name and qty
+    (DB.ventas||[]).filter(v=>normFecha(v.fecha).startsWith(filtMes)).forEach(v=>{
+      const items=Array.isArray(v.items)?v.items:(typeof v.items==='string'?JSON.parse(v.items||'[]'):[]);
+      items.forEach(i=>{const k=(i.nombre||'').trim();if(k)cntProd[k]=(cntProd[k]||0)+N(i.cant||1);});
+    });
+    const sorted=Object.entries(cntProd).sort((a,b)=>b[1]-a[1]).slice(0,10);
+    const mx=sorted[0]?.[1]||1;
     const cols=['var(--amber)','var(--rust2)','var(--sage)','var(--gold2)','var(--mauve)'];
     const margenesHTML=PRODS_DB().map(p=>{const ings=Array.isArray(p.ings)?p.ings:(typeof p.ings==='string'?JSON.parse(p.ings||'[]'):[]);const costo=ings.reduce((s,u)=>{const i=ING().find(x=>x.id==u.iid);return s+(i?.costo?N(i.costo)*N(u.cant):0);},0);const m=p.precio>0?Math.round(((p.precio-costo)/p.precio)*100):0;const vendidoPed=PEDS_DB().filter(x=>x.estado!=='cancelado'&&x.recId==p.id).reduce((s,x)=>s+N(x.total),0);const vendidoCaja=(DB.ventas||[]).reduce((s,v)=>{const items=Array.isArray(v.items)?v.items:(typeof v.items==='string'?JSON.parse(v.items||'[]'):[]);return s+items.filter(i=>i.id==='p_'+p.id).reduce((ss,i)=>ss+N(i.precio)*N(i.cant),0);},0);const vendidoTotal=vendidoPed+vendidoCaja;return`<div class="li"><div class="la bg-a">🎂</div><div class="lb"><div class="lt">${p.nombre}</div><div class="ls">Costo: ${money(costo)} · Precio: ${money(p.precio)}${vendidoTotal>0?` · Vendido: ${money(vendidoTotal)}`:''}</div></div><div class="lm"><div class="lamt" style="color:${m>50?'var(--ok)':m>25?'var(--warn)':'var(--danger)'}">${m}%</div></div></div>`;}).join('');
     const prodsInvHTML=ING().filter(i=>N(i.precioVenta)>0&&N(i.costo)>0).map(i=>{const m=i.precioVenta>0?Math.round(((N(i.precioVenta)-N(i.costo))/N(i.precioVenta))*100):0;const vendido=(DB.ventas||[]).reduce((s,v)=>{const items=Array.isArray(v.items)?v.items:(typeof v.items==='string'?JSON.parse(v.items||'[]'):[]);return s+items.filter(x=>x.id==='i_'+i.id).reduce((ss,x)=>ss+N(x.precio)*N(x.cant),0);},0);return`<div class="li"><div class="la bg-c">📦</div><div class="lb"><div class="lt">${i.nombre}</div><div class="ls">Costo: ${money(i.costo)} · Venta: ${money(i.precioVenta)}${vendido>0?` · Vendido: ${money(vendido)}`:''}</div></div><div class="lm"><div class="lamt" style="color:${m>50?'var(--ok)':m>25?'var(--warn)':'var(--danger)'}">${m}%</div></div></div>`;}).join('');
     const mesLblProd=new Date(filtMes+'-02').toLocaleDateString('es',{month:'long',year:'numeric'});
-    cont.innerHTML=`<div class="card"><div class="card-hd">🏆 Más vendidos — ${mesLblProd}</div><div class="cbar-wrap">${sorted.length?sorted.map((s,i)=>`<div class="cbar-row"><div class="cbar-label" style="font-size:.58rem;width:110px;white-space:normal;word-break:break-word;line-height:1.2">${s[0]}</div><div class="cbar-bg"><div class="cbar-fill" style="width:${Math.round(s[1]/mx*100)}%;background:${cols[i%5]}"></div></div><div class="cbar-val">${money(s[1])}</div></div>`).join(''):`<div class="empty" style="padding:14px"><div class="empty-t">Sin datos de ventas</div></div>`}</div></div>
+    cont.innerHTML=`<div class="card"><div class="card-hd">🏆 Más vendidos — ${mesLblProd}</div><div class="cbar-wrap">${sorted.length?sorted.map((s,i)=>`<div class="cbar-row"><div class="cbar-label" style="font-size:.58rem;width:110px;white-space:normal;word-break:break-word;line-height:1.2">${s[0]}</div><div class="cbar-bg"><div class="cbar-fill" style="width:${Math.round(s[1]/mx*100)}%;background:${cols[i%5]}"></div></div><div class="cbar-val">${s[1]} uds</div></div>`).join(''):`<div class="empty" style="padding:14px"><div class="empty-t">Sin datos de ventas</div></div>`}</div></div>
     <div class="card"><div class="card-hd">💹 Márgenes — Catálogo</div>${margenesHTML||`<div class="empty" style="padding:12px"><div class="empty-t">Sin productos</div></div>`}</div>
     ${prodsInvHTML?`<div class="card"><div class="card-hd">💹 Márgenes — Inventario</div>${prodsInvHTML}</div>`:''}`;
   } else if(tab==='inventario'){
@@ -2173,12 +2188,24 @@ function buildPedFilas(p){
   filas=[...filas,...extrasFilas];
   return{filas,precioBase,costoExtras,total:N(p.total)};
 }
-function generarFacturaAnticipo(pedId){const p=PEDS_DB().find(x=>x.id==pedId);if(!p)return;const num=nextFacNum(),fecha=new Date().toLocaleDateString('es',{day:'2-digit',month:'2-digit',year:'numeric'});const{filas,precioBase,costoExtras,total}=buildPedFilas(p);const totLines=[...(costoExtras>0?[{label:'Subtotal:',valor:money(precioBase)},{label:'Extras:',valor:money(costoExtras)},{label:'Total pedido:',valor:money(total)}]:[{label:'Total pedido:',valor:money(total)}]),{label:'<span style="color:#c97c1e">✅ Anticipo recibido:</span>',valor:`<span style="color:#2a8040;font-weight:700">${money(p.anticipo)}</span>`},{label:'<b>Saldo contra entrega:</b>',valor:`<b style="color:#c0302a">${money(p.restante)}</b>`,highlight:true}];showFactura('Recibo de Anticipo',facHeader('Recibo de Anticipo',num,fecha)+facClienteRow(p)+facTabla(filas)+facTotales(totLines)+facPie(p.notas));}
-function generarFacturaFinal(pedId){const p=PEDS_DB().find(x=>x.id==pedId);if(!p)return;const num=nextFacNum(),fecha=new Date().toLocaleDateString('es',{day:'2-digit',month:'2-digit',year:'numeric'});p.facNum=num;p.updated=new Date().toISOString();syncRow('pedidos','update',p,p.id);const{filas,precioBase,costoExtras,total}=buildPedFilas(p);const totLines=[...(costoExtras>0?[{label:'Subtotal:',valor:money(precioBase)},{label:'Extras:',valor:money(costoExtras)}]:[]),{label:'Subtotal:',valor:money(total)},{label:'Anticipo pagado:',valor:`-${money(p.anticipo)}`},{label:'<b>TOTAL A PAGAR:</b>',valor:`<b>${money(p.restante)}</b>`,highlight:true,color:N(p.restante)===0?'#2a8040':'#c0302a'},...(N(p.restante)===0?[{label:'Estado:',valor:'<span style="color:#2a8040;font-weight:700">✅ PAGADO COMPLETO</span>'}]:[])];showFactura('Factura de Venta',facHeader('Factura de Venta',num,fecha)+facClienteRow(p)+facTabla(filas)+facTotales(totLines)+facPie(p.notas));}
+function getOrCreateFacNum(pedId,tipo){
+  if(!DB.facturas)DB.facturas=[];
+  const existing=DB.facturas.find(f=>String(f.pedido_id)===String(pedId)&&f.tipo===tipo);
+  if(existing)return{num:existing.fac_num,fecha:existing.fecha,hora:existing.hora,isNew:false};
+  const num=nextFacNum();const now=new Date();
+  const fecha=now.toLocaleDateString('es',{day:'2-digit',month:'2-digit',year:'numeric'});
+  const hora=now.toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit'});
+  const rec={id:uid(),pedido_id:pedId,tipo,fac_num:num,fecha,hora,created:now.toISOString()};
+  DB.facturas.push(rec);syncRow('facturas','write',rec,rec.id);
+  return{num,fecha,hora,isNew:true};
+}
+function generarFacturaAnticipo(pedId){const p=PEDS_DB().find(x=>x.id==pedId);if(!p)return;const{num,fecha,hora}=getOrCreateFacNum(pedId,'anticipo');const{filas,precioBase,costoExtras,total}=buildPedFilas(p);const totLines=[...(costoExtras>0?[{label:'Subtotal:',valor:money(precioBase)},{label:'Extras:',valor:money(costoExtras)},{label:'Total pedido:',valor:money(total)}]:[{label:'Total pedido:',valor:money(total)}]),{label:'<span style="color:#c97c1e">✅ Anticipo recibido:</span>',valor:`<span style="color:#2a8040;font-weight:700">${money(p.anticipo)}</span>`},{label:'<b>Saldo contra entrega:</b>',valor:`<b style="color:#c0302a">${money(p.restante)}</b>`,highlight:true}];showFactura('Recibo de Anticipo',facHeader('Recibo de Anticipo',num,fecha)+facClienteRow(p)+facTabla(filas)+facTotales(totLines)+facPie(p.notas));}
+function generarFacturaFinal(pedId){const p=PEDS_DB().find(x=>x.id==pedId);if(!p)return;const{num,fecha,hora}=getOrCreateFacNum(pedId,'final');p.facNum=num;p.updated=new Date().toISOString();syncRow('pedidos','update',p,p.id);const{filas,precioBase,costoExtras,total}=buildPedFilas(p);const totLines=[...(costoExtras>0?[{label:'Subtotal:',valor:money(precioBase)},{label:'Extras:',valor:money(costoExtras)}]:[]),{label:'Subtotal:',valor:money(total)},{label:'Anticipo pagado:',valor:`-${money(p.anticipo)}`},{label:'<b>TOTAL A PAGAR:</b>',valor:`<b>${money(p.restante)}</b>`,highlight:true,color:N(p.restante)===0?'#2a8040':'#c0302a'},...(N(p.restante)===0?[{label:'Estado:',valor:'<span style="color:#2a8040;font-weight:700">✅ PAGADO COMPLETO</span>'}]:[])];showFactura('Factura de Venta',facHeader('Factura de Venta',num,fecha)+facClienteRow(p)+facTabla(filas)+facTotales(totLines)+facPie(p.notas));}
 function generarFacturaCotizacion(cotId){const c=DB.cotizaciones.find(x=>x.id==cotId);if(!c)return;const num=nextFacNum(),fecha=new Date().toLocaleDateString('es',{day:'2-digit',month:'2-digit',year:'numeric'});const vence=new Date(Date.now()+(c.valida||7)*86400000).toLocaleDateString('es',{day:'2-digit',month:'2-digit',year:'numeric'});const items=Array.isArray(c.items)?c.items:(typeof c.items==='string'?JSON.parse(c.items||'[]'):[]);const subtotal=items.reduce((s,i)=>s+N(i.precio),0),desc=c.descuento||0,total=subtotal*(1-desc/100);const cliente=`<div style="background:#fdf5e9;border-radius:8px;padding:9px 11px;margin-bottom:12px;border:1px solid rgba(100,60,20,.15)"><div style="font-size:10px;font-weight:700;color:#7a4a20;margin-bottom:4px">CLIENTE</div><div style="font-size:13px;font-weight:700">${c.cliente}</div>${c.evento?`<div style="font-size:11px">Evento: <b>${c.evento}</b></div>`:''}<div style="font-size:11px;color:#888">Válida hasta: <b>${vence}</b></div></div>`;showFactura('Cotización',facHeader('Cotización',num,fecha)+cliente+facTabla(items.map(i=>({desc:i.prod,qty:i.qty||1,precio:i.precioUnit||i.precio,subtotal:i.precio})))+facTotales([{label:'Subtotal:',valor:money(subtotal)},...(desc?[{label:`Descuento (${desc}%):`,valor:`-${money(subtotal*desc/100)}`}]:[]),{label:'<b>TOTAL ESTIMADO:</b>',valor:`<b>${money(total)}</b>`,highlight:true}])+facPie(c.notas));}
 function generarReciboCobro(pedId,monto,metodo,saldoRestante){
   const p=PEDS_DB().find(x=>x.id==pedId);if(!p)return;
-  const num=nextFacNum(),fecha=new Date().toLocaleDateString('es',{day:'2-digit',month:'2-digit',year:'numeric'});
+  const cobroKey='cobro_'+String(monto);
+  const{num,fecha,hora}=getOrCreateFacNum(pedId,cobroKey);
   const{filas}=buildPedFilas(p);
   const saldo=saldoRestante!==undefined?saldoRestante:Math.max(0,N(p.restante)-monto);
   const saldoAntesPago=saldo+monto; // restante antes de este pago
@@ -2212,22 +2239,26 @@ function renderEcfRangos(){const wrap=document.getElementById('ecf-rangos-list')
 function renderEcfSecuencias(){const wrap=document.getElementById('ecf-secuencias');if(!wrap)return;const tipos=ECF.tiposHabilitados||[];const rangos=ECF.rangos||[];wrap.innerHTML=tipos.map(cod=>{const tipo=ECF_TIPOS_DGII.find(t=>t.codigo===cod);const rango=rangos.find(r=>r.tipo===cod);const proximo=rango?rango.proximo:(ECF.secuencias||{})[cod]||1;const ncf=generarNCF(cod,proximo);const restantes=rango?(rango.hasta-rango.proximo+1):null;const agotando=restantes!==null&&restantes<=Math.max(10,Math.round((rango.hasta-rango.desde+1)*0.1));return`<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--paper);border-radius:8px;margin-bottom:5px;border:1px solid ${agotando?'var(--danger)':'var(--border)'}"><div style="flex:1"><div style="font-size:.78rem;font-weight:700">${tipo?.nombre||cod}</div><div style="font-size:.68rem;color:var(--ink3)">Próximo: <b style="color:var(--amber)">${ncf}</b>${restantes!==null?` · Restantes: <b style="color:${agotando?'var(--danger)':'var(--ok)'}">${restantes}</b>`:''}</div></div></div>`;}).join('')||'<div style="font-size:.78rem;color:var(--ink3);font-style:italic">No hay tipos habilitados</div>';}
 function generarNCF(tipoCod,seq){return`E${tipoCod}${String(seq).padStart(10,'0')}`;}
 function nextNCF(tipoCod){
-  const rango=(ECF.rangos||[]).find(r=>r.tipo===tipoCod&&(r.proximo||r.desde)<=r.hasta);
+  // Find valid (non-expired) range for this type
+  const hoy=today();
+  const rangos=(ECF.rangos||[]).filter(r=>r.tipo===tipoCod&&(r.proximo||r.desde)<=r.hasta&&(!r.vencimiento||normFecha(r.vencimiento)>=hoy));
+  const rango=rangos.length>0?rangos[0]:null;
   if(rango){
     const actual=rango.proximo||rango.desde||1;
     const ncf=generarNCF(tipoCod,actual);
-    rango.proximo=actual+1; // incrementar DESPUÉS de generar
-    LS.s('dg_ecf',ECF);
-    upsertConfig('ecf_config',JSON.stringify(ECF));
+    rango.proximo=actual+1;
+    LS.s('dg_ecf',ECF);upsertConfig('ecf_config',JSON.stringify(ECF));
     return ncf;
   }
-  // Sin rangos configurados: usar secuencias
+  // No valid range — check if there's an expired one
+  const expired=(ECF.rangos||[]).filter(r=>r.tipo===tipoCod);
+  if(expired.length>0){toast('❌ El rango de comprobantes tipo '+tipoCod+' está vencido. Actualiza el rango en Configuración.');return null;}
+  // Use secuencias fallback
   if(!ECF.secuencias)ECF.secuencias={};
   const n=ECF.secuencias[tipoCod]||1;
   const ncf=generarNCF(tipoCod,n);
   ECF.secuencias[tipoCod]=n+1;
-  LS.s('dg_ecf',ECF);
-  upsertConfig('ecf_config',JSON.stringify(ECF));
+  LS.s('dg_ecf',ECF);upsertConfig('ecf_config',JSON.stringify(ECF));
   return ncf;
 }
 
@@ -2252,7 +2283,22 @@ function openEcfEmitir(pedId){
     </div>
     <div class="fg"><label class="fl">Tipo de Comprobante *</label>
       <select class="fc" id="ecf-emit-tipo">
-        ${tipos.map(cod=>{const t=ECF_TIPOS_DGII.find(x=>x.codigo===cod);const rng=(ECF.rangos||[]).find(r=>r.tipo===cod);const prox=rng?rng.proximo:(ECF.secuencias?.[cod]||1);return`<option value="${cod}">${cod} — ${t?.nombre||cod} (próx: E${cod}${String(prox).padStart(10,'0')})</option>`;}).join('')}
+        ${(() => {
+          const hoy=today();
+          // Only types with at least one non-expired, non-exhausted range
+          const tiposValidos=[...new Set((ECF.rangos||[])
+            .filter(r=>(!r.vencimiento||normFecha(r.vencimiento)>=hoy)&&(r.proximo||r.desde)<=r.hasta)
+            .map(r=>r.tipo))].sort();
+          // Also include tipos from tiposHabilitados that use secuencias (no rangos)
+          (ECF.tiposHabilitados||[]).forEach(cod=>{if(!tiposValidos.includes(cod)&&!(ECF.rangos||[]).find(r=>r.tipo===cod))tiposValidos.push(cod);});
+          tiposValidos.sort();
+          return tiposValidos.map(cod=>{
+            const t=ECF_TIPOS_DGII.find(x=>x.codigo===cod);
+            const rng=(ECF.rangos||[]).filter(r=>r.tipo===cod&&(!r.vencimiento||normFecha(r.vencimiento)>=hoy)&&(r.proximo||r.desde)<=r.hasta)[0];
+            const prox=rng?(rng.proximo||rng.desde):(ECF.secuencias?.[cod]||1);
+            return`<option value="${cod}">${cod} — ${t?.nombre||cod} (próx: E${cod}${String(prox).padStart(10,'0')})</option>`;
+          }).join('');
+        })()}
       </select>
     </div>
     <div class="fg"><label class="fl">RNC / Cédula del cliente <span style="font-weight:400;color:var(--ink3)">(requerido para tipo 31)</span></label>
