@@ -1638,13 +1638,29 @@ function savePed(){const cli=document.getElementById('f-cli').value.trim(),descr
     });
     if(ingInactivos.length>0){toast('❌ Ingredientes inactivos: '+[...new Set(ingInactivos)].slice(0,3).join(', '));return;}
   }
-  // Validate: editing - inactive products cannot have qty increased
+  // Validate: editing - inactive products cannot have qty increased AND
+  // new products added in edit mode cannot have inactive ingredients
   if(eid0){
     const origPed=PEDS_DB().find(p=>p.id==eid0);
     const origProds=origPed?parseArr(origPed.pedProds||origPed.ped_prods):[];
     let blocked=false;
-    getPedProds().forEach(({recId,qty})=>{const prod=PRODS_DB().find(p=>p.id==recId);if(!prod||!prod.estatus||prod.estatus==='activo')return;const origP=origProds.find(pp=>String(pp.recId)===String(recId));const origQty=origP?origP.qty:0;if(qty>origQty){toast('❌ "'+prod.nombre+'" está inactivo. No puedes aumentar la cantidad (original: '+origQty+')');blocked=true;}});
+    const ingInactivosEdit=[];
+    getPedProds().forEach(({recId,qty})=>{
+      const prod=PRODS_DB().find(p=>p.id==recId);if(!prod)return;
+      const origP=origProds.find(pp=>String(pp.recId)===String(recId));
+      const isNew=!origP; // product not in original pedido
+      // Block if inactive product qty increased
+      if(prod.estatus==='inactivo'){
+        const origQty=origP?origP.qty:0;
+        if(qty>origQty){toast('❌ "'+prod.nombre+'" está inactivo. No puedes aumentar la cantidad (original: '+origQty+')');blocked=true;return;}
+      }
+      // Block if new product has inactive ingredients
+      if(isNew){
+        parseArr(prod.ings).forEach(u=>{const ing=ING().find(i=>i.id==u.iid);if(ing&&ing.estatus==='inactivo')ingInactivosEdit.push(ing.nombre+' ('+prod.nombre+')');});
+      }
+    });
     if(blocked)return;
+    if(ingInactivosEdit.length>0){toast('❌ Ingredientes inactivos en nuevo producto: '+[...new Set(ingInactivosEdit)].slice(0,3).join(', '));return;}
   }
   const lim=parseInt(CFG.limitePedidos)||0;
   if(lim>0){
@@ -2052,7 +2068,7 @@ function renderRep(tab){
     cont.innerHTML=`<div class="sg"><div class="sc sc-a"><div class="sl">Cobrado</div><div class="sv">${money(cobradoMes)}</div><div class="ss">${mesLblVentas.split(' ')[0]}</div></div><div class="sc sc-c"><div class="sl">Pedidos</div><div class="sv">${pedidosMes}</div><div class="ss">del mes</div></div><div class="sc sc-e"><div class="sl">Total Cobrado</div><div class="sv">${money(cobradoTotal)}</div><div class="ss">histórico</div></div><div class="sc sc-b"><div class="sl">Por Cobrar</div><div class="sv">${money(porCobrar)}</div><div class="ss">pendiente</div></div><div class="sc sc-rust"><div class="sl">Pend. Pagar</div><div class="sv">${money(cxpPendRep)}</div><div class="ss">CxP pendiente</div></div><div class="sc" style="background:linear-gradient(135deg,rgba(120,80,180,.13),rgba(120,80,180,.06));border:1.5px solid rgba(120,80,180,.25)"><div class="sl" style="color:#7850b4">Gastos Mes</div><div class="sv" style="color:#7850b4">${money(gastosMesRep)}</div><div class="ss">egresos registrados</div></div></div>
     <div class="card"><div class="card-hd">📈 Últimos 7 días</div><div class="cbar-wrap">${dias.map(d=>`<div class="cbar-row"><div class="cbar-label">${d.lbl}</div><div class="cbar-bg"><div class="cbar-fill" style="width:${Math.round(d.t/mx*100)}%;background:var(--amber)"></div></div><div class="cbar-val">${money(d.t)}</div></div>`).join('')}</div></div>
     <div class="card"><div class="card-hd">📊 Últimos 6 meses</div><div class="cbar-wrap">${l6.map(m=>`<div class="cbar-row"><div class="cbar-label" style="font-size:.62rem">${m.lbl}</div><div class="cbar-bg"><div class="cbar-fill" style="width:${Math.round(m.total/mx6*100)}%;background:${m.mStr===filtMes?'var(--amber)':'var(--blue2)'}"></div></div><div class="cbar-val" style="font-size:.65rem">${money(m.total)}</div></div>`).join('')}</div></div>
-    <div class="card"><div class="card-hd">📋 Cobros — ${mesLblVentas}</div>${pagosMes.length?pagosMes.map(pg=>`<div class="li"><div class="la bg-c">💰</div><div class="lb"><div class="lt">${pg.cliente||'—'}</div><div class="ls">${pg.tipo} · ${fDate(pg.fecha)} · ${pg.metodo||'—'}</div></div><div class="lm"><div class="lamt">${money(pg.monto)}</div></div></div>`).join(''):`<div class="empty" style="padding:12px"><div class="empty-t">Sin cobros</div></div>`}</div>`;
+    <div class="card"><div class="card-hd">📋 Cobros — ${mesLblVentas}</div>${[...pagosMes].sort((a,b)=>{const fa=(normFecha(a.fecha)||'')+(a.hora||a.created||'');const fb=(normFecha(b.fecha)||'')+(b.hora||b.created||'');return fa.localeCompare(fb);}).map(pg=>`<div class="li"><div class="la bg-c">💰</div><div class="lb"><div class="lt">${pg.cliente||'—'}</div><div class="ls">${pg.tipo} · ${fDate(pg.fecha)}${pg.hora?' · '+pg.hora:pg.created?' · '+new Date(pg.created).toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit'}):''} · ${pg.metodo||'—'}</div></div><div class="lm"><div class="lamt">${money(pg.monto)}</div></div></div>`).join('')||`<div class="empty" style="padding:12px"><div class="empty-t">Sin cobros</div></div>`}</div>`;
   } else if(tab==='pnl'){
     const mesLbl=new Date(filtMes+'-02').toLocaleDateString('es',{month:'long',year:'numeric'});
     const pA=v=>{if(!v||v===''||v==='null')return[];if(Array.isArray(v))return v;let s=String(v);for(let i=0;i<3;i++){s=s.trim();if(!s.startsWith('[')&&!s.startsWith('{'))break;try{const p=JSON.parse(s);if(Array.isArray(p))return p;if(typeof p==='string'){s=p;continue;}break;}catch{break;}}return[];};
