@@ -1449,12 +1449,37 @@ function confirmListo(){
     alert('⚠️ No hay suficiente inventario:\n\n'+faltantes.join('\n'));
     return;
   }
+  // ── Pause auto-refresh during inventory update ────────────────
+  isRefreshing=true;
   // ── Descontar inventario de receta ───────────────────────────
   const usados=[],movs=[];
-  ic.forEach((u)=>{const cant=u.cant;const ing=ING().find(x=>x.id==u.iid);if(!ing||!cant)return;ing.cant=Math.max(0,ing.cant-cant);usados.push({iid:ing.id,cant,tipo:'receta'});movs.push({id:uid(),tipo:'salida',nombre:ing.nombre,cant,costo:0,notas:`Receta #${p.id}`,fecha:localISODate(),ref:String(p.id)});syncRow('inventario','update',ing,ing.id);});
+  ic.forEach((u)=>{
+    const cant=u.cant;
+    const ing=ING().find(x=>x.id==u.iid);if(!ing||!cant)return;
+    ing.cant=Math.max(0,N(ing.cant)-cant);
+    usados.push({iid:ing.id,cant,tipo:'receta'});
+    movs.push({id:uid(),tipo:'salida',nombre:ing.nombre,cant,costo:0,notas:`Receta #${p.id}`,fecha:localISODate(),ref:String(p.id)});
+  });
   // ── Descontar extras de producción ────────────────────────────
   const extrasP=[];
-  for(let n=0;n<listoExtCnt;n++){const row=document.getElementById(`le-row-${n}`);if(!row)continue;const ce=document.getElementById(`le-c-${n}`);if(!ce)continue;const cant=N(ce.value);if(!cant)continue;const iid=row.dataset.iid?parseInt(row.dataset.iid):0;if(!iid)continue;const ing=ING().find(i=>i.id==iid);if(!ing)continue;ing.cant=Math.max(0,ing.cant-cant);extrasP.push({iid:ing.id,cant,tipo:'extra-producción'});movs.push({id:uid(),tipo:'salida',nombre:ing.nombre,cant,costo:0,notas:`Extra prod #${p.id}`,fecha:localISODate(),ref:String(p.id)});syncRow('inventario','update',ing,ing.id);}
+  for(let n=0;n<listoExtCnt;n++){
+    const row=document.getElementById(`le-row-${n}`);if(!row)continue;
+    const ce=document.getElementById(`le-c-${n}`);if(!ce)continue;
+    const cant=N(ce.value);if(!cant)continue;
+    const iid=row.dataset.iid?parseInt(row.dataset.iid):0;if(!iid)continue;
+    const ing=ING().find(i=>i.id==iid);if(!ing)continue;
+    ing.cant=Math.max(0,N(ing.cant)-cant);
+    extrasP.push({iid:ing.id,cant,tipo:'extra-producción'});
+    movs.push({id:uid(),tipo:'salida',nombre:ing.nombre,cant,costo:0,notas:`Extra prod #${p.id}`,fecha:localISODate(),ref:String(p.id)});
+  }
+  // ── Sync all inventory changes first, then pedido ────────────
+  // Get unique ingredients updated (deduplicate by id)
+  const ingsActualizados=new Map();
+  [...usados,...extrasP].forEach(u=>{const ing=ING().find(x=>x.id==u.iid);if(ing)ingsActualizados.set(ing.id,ing);});
+  // Sync all inventory rows
+  const syncPromises=[];
+  ingsActualizados.forEach(ing=>syncPromises.push(syncRow('inventario','update',ing,ing.id)));
+  Promise.all(syncPromises).then(()=>{isRefreshing=false;}).catch(()=>{isRefreshing=false;});
   // ── Aplicar cargo extra al precio ────────────────────────────
   const cargo=N(document.getElementById('listo-cargo-extra')?.value)||0;
   if(cargo>0){p.total=N(p.total)+cargo;p.restante=N(p.restante)+cargo;}
@@ -2196,7 +2221,9 @@ function getOrCreateFacNum(pedId,tipo){
   const fecha=now.toLocaleDateString('es',{day:'2-digit',month:'2-digit',year:'numeric'});
   const hora=now.toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit'});
   const rec={id:uid(),pedido_id:pedId,tipo,fac_num:num,fecha,hora,created:now.toISOString()};
-  DB.facturas.push(rec);syncRow('facturas','write',rec,rec.id);
+  DB.facturas.push(rec);
+  // Try to save - ignore errors (table may not exist yet or RLS not configured)
+  syncRow('facturas','write',rec,rec.id).catch(e=>console.warn('facturas save:',e.message));
   return{num,fecha,hora,isNew:true};
 }
 function generarFacturaAnticipo(pedId){const p=PEDS_DB().find(x=>x.id==pedId);if(!p)return;const{num,fecha,hora}=getOrCreateFacNum(pedId,'anticipo');const{filas,precioBase,costoExtras,total}=buildPedFilas(p);const totLines=[...(costoExtras>0?[{label:'Subtotal:',valor:money(precioBase)},{label:'Extras:',valor:money(costoExtras)},{label:'Total pedido:',valor:money(total)}]:[{label:'Total pedido:',valor:money(total)}]),{label:'<span style="color:#c97c1e">✅ Anticipo recibido:</span>',valor:`<span style="color:#2a8040;font-weight:700">${money(p.anticipo)}</span>`},{label:'<b>Saldo contra entrega:</b>',valor:`<b style="color:#c0302a">${money(p.restante)}</b>`,highlight:true}];showFactura('Recibo de Anticipo',facHeader('Recibo de Anticipo',num,fecha)+facClienteRow(p)+facTabla(filas)+facTotales(totLines)+facPie(p.notas));}
@@ -2236,7 +2263,21 @@ function addEcfTipo(preVal){const wrap=document.getElementById('ecf-tipos-list')
 function renderEcfTipos(){const wrap=document.getElementById('ecf-tipos-list');if(!wrap)return;wrap.innerHTML='';ecfTiposCnt=0;(ECF.tiposHabilitados||['32','31']).forEach(t=>addEcfTipo(t));}
 function addEcfRango(pre){const wrap=document.getElementById('ecf-rangos-list');if(!wrap)return;const n=ecfRangosCnt++;const div=document.createElement('div');div.id=`ecf-rango-row-${n}`;div.style.cssText='background:var(--paper);border-radius:var(--r8);padding:10px;margin-bottom:8px;border:1px solid var(--border);';div.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:7px"><div style="font-size:.74rem;font-weight:700;color:var(--ink2)">Rango ${n+1}</div><button onclick="document.getElementById('ecf-rango-row-${n}').remove()" style="background:rgba(192,48,42,.1);border:none;color:var(--danger);border-radius:6px;cursor:pointer;font-size:.85rem;padding:2px 8px">✕</button></div><div class="fg"><label class="fl">Tipo</label><select class="fc" id="ecf-r-tipo-${n}" style="font-size:.78rem">${ECF_TIPOS_DGII.map(t=>`<option value="${t.codigo}"${pre?.tipo===t.codigo?' selected':''}>${t.codigo} — ${t.nombre}</option>`).join('')}</select></div><div class="fr3"><div class="fg"><label class="fl">Desde N°</label><input class="fc" id="ecf-r-desde-${n}" type="number" value="${pre?.desde||''}" placeholder="1"></div><div class="fg"><label class="fl">Hasta N°</label><input class="fc" id="ecf-r-hasta-${n}" type="number" value="${pre?.hasta||''}" placeholder="1000"></div><div class="fg"><label class="fl">Próximo</label><input class="fc" id="ecf-r-proximo-${n}" type="number" value="${pre?.proximo||pre?.desde||''}" placeholder="1"></div></div><div class="fg"><label class="fl">Vencimiento</label><input class="fc" id="ecf-r-vence-${n}" type="date" value="${pre?.vencimiento||''}"></div>`;wrap.appendChild(div);}
 function renderEcfRangos(){const wrap=document.getElementById('ecf-rangos-list');if(!wrap)return;wrap.innerHTML='';ecfRangosCnt=0;const rangos=ECF.rangos||[];if(!rangos.length){wrap.innerHTML='<div style="font-size:.78rem;color:var(--ink3);font-style:italic;margin-bottom:8px">Sin rangos configurados.</div>';return;}rangos.forEach(r=>addEcfRango(r));}
-function renderEcfSecuencias(){const wrap=document.getElementById('ecf-secuencias');if(!wrap)return;const tipos=ECF.tiposHabilitados||[];const rangos=ECF.rangos||[];wrap.innerHTML=tipos.map(cod=>{const tipo=ECF_TIPOS_DGII.find(t=>t.codigo===cod);const rango=rangos.find(r=>r.tipo===cod);const proximo=rango?rango.proximo:(ECF.secuencias||{})[cod]||1;const ncf=generarNCF(cod,proximo);const restantes=rango?(rango.hasta-rango.proximo+1):null;const agotando=restantes!==null&&restantes<=Math.max(10,Math.round((rango.hasta-rango.desde+1)*0.1));return`<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--paper);border-radius:8px;margin-bottom:5px;border:1px solid ${agotando?'var(--danger)':'var(--border)'}"><div style="flex:1"><div style="font-size:.78rem;font-weight:700">${tipo?.nombre||cod}</div><div style="font-size:.68rem;color:var(--ink3)">Próximo: <b style="color:var(--amber)">${ncf}</b>${restantes!==null?` · Restantes: <b style="color:${agotando?'var(--danger)':'var(--ok)'}">${restantes}</b>`:''}</div></div></div>`;}).join('')||'<div style="font-size:.78rem;color:var(--ink3);font-style:italic">No hay tipos habilitados</div>';}
+function renderEcfSecuencias(){const wrap=document.getElementById('ecf-secuencias');if(!wrap)return;const tipos=ECF.tiposHabilitados||[];const rangos=ECF.rangos||[];const hoy=today();wrap.innerHTML=tipos.map(cod=>{const tipo=ECF_TIPOS_DGII.find(t=>t.codigo===cod);
+  // Find active (non-expired, not exhausted) range
+  const rangoActivo=rangos.find(r=>r.tipo===cod&&(!r.vencimiento||normFecha(r.vencimiento)>=hoy)&&(r.proximo||r.desde)<=r.hasta);
+  // Find any range (even expired) for fallback display
+  const rangoAny=rangos.filter(r=>r.tipo===cod).sort((a,b)=>{const av=!a.vencimiento||normFecha(a.vencimiento)>=hoy?1:0;const bv=!b.vencimiento||normFecha(b.vencimiento)>=hoy?1:0;return bv-av;})[0];
+  const rango=rangoActivo||rangoAny;
+  const vencido=rango&&rango.vencimiento&&normFecha(rango.vencimiento)<hoy;
+  const exhausto=rango&&(rango.proximo||rango.desde)>rango.hasta;
+  const proximo=rangoActivo?(rangoActivo.proximo||rangoActivo.desde):(ECF.secuencias||{})[cod]||1;
+  const ncf=generarNCF(cod,proximo);
+  const restantes=rangoActivo?(rangoActivo.hasta-(rangoActivo.proximo||rangoActivo.desde)+1):null;
+  const agotando=restantes!==null&&restantes<=Math.max(10,Math.round(((rangoActivo?.hasta||0)-(rangoActivo?.desde||0)+1)*0.1));
+  const statusColor=vencido||exhausto?'var(--danger)':agotando?'var(--warn)':'var(--border)';
+  const badge=vencido?'⛔ Vencido':exhausto?'⚠️ Agotado':rangoActivo?'✅ Activo':'—';
+  return`<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--paper);border-radius:8px;margin-bottom:5px;border:1px solid ${statusColor}"><div style="flex:1"><div style="font-size:.78rem;font-weight:700">${tipo?.nombre||cod} <span style="font-size:.65rem;color:${vencido||exhausto?'var(--danger)':'var(--ok)'}">${badge}</span></div><div style="font-size:.68rem;color:var(--ink3)">Próximo: <b style="color:${vencido||exhausto?'var(--danger)':'var(--amber)'}">${ncf}</b>${restantes!==null?` · Restantes: <b style="color:${agotando?'var(--danger)':'var(--ok)'}">${restantes}</b>`:''}</div></div></div>`;}).join('')||'<div style="font-size:.78rem;color:var(--ink3);font-style:italic">No hay tipos habilitados</div>';}
 function generarNCF(tipoCod,seq){return`E${tipoCod}${String(seq).padStart(10,'0')}`;}
 function nextNCF(tipoCod){
   // Find valid (non-expired) range for this type
