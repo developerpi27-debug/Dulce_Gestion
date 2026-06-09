@@ -1807,13 +1807,35 @@ function calcCostoUnitFromTotal(){const cant=N(document.getElementById('mf-cant'
 function regMov(tipo){const iid=parseInt(document.getElementById('mf-ing').value),cant=N(document.getElementById('mf-cant').value);if(!iid||!cant){toast('❌ Completa los campos');return;}const ing=ING().find(i=>i.id==iid);if(!ing)return;if(tipo==='salida'&&ing.cant<cant){if(!confirm(`Stock insuficiente (${R(ing.cant)}). ¿Continuar?`))return;}if(tipo==='entrada')ing.cant+=cant;else ing.cant=Math.max(0,ing.cant-cant);ing.updated=new Date().toISOString();const m={id:uid(),tipo,nombre:ing.nombre,cant,costo:tipo==='entrada'?N(document.getElementById('mf-costo')?.value):0,notas:document.getElementById('mf-notas').value,fecha:new Date().toISOString(),ref:''};DB.movimientos.push(m);syncRow('inventario','update',ing,ing.id);syncRow('movimientos','write',m,m.id);toast(`✅ ${tipo==='entrada'?'Entrada':'Salida'} registrada`);renderStock();document.querySelectorAll('#tabs-inv .tab').forEach((t,i)=>t.classList.toggle('on',i===0));invTab='stock';}
 
 /* FIX #1: Editar entrada en movimientos restaurado */
+let movSort='desc';let movFiltroTipo='';let movFiltroFechaDesde='';let movFiltroFechaHasta='';
+
 function renderMovs(){
-  const cont=document.getElementById('inv-content');const ms=[...DB.movimientos].reverse().slice(0,80);
-  if(!ms.length){cont.innerHTML=emptyHTML('📋','Sin movimientos');return;}
-  cont.innerHTML=`<div class="card"><div class="card-hd">📋 Movimientos</div>`+ms.map(m=>`
+  const cont=document.getElementById('inv-content');
+  // Build filter bar
+  const filterBar=`<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+    <select class="fc" id="mov-tipo-filter" onchange="movFiltroTipo=this.value;renderMovs()" style="font-size:.74rem;padding:5px 8px;max-width:130px">
+      <option value="">Todos los tipos</option>
+      <option value="entrada" ${movFiltroTipo==='entrada'?'selected':''}>📥 Entradas</option>
+      <option value="salida" ${movFiltroTipo==='salida'?'selected':''}>📤 Salidas</option>
+    </select>
+    <input type="date" class="fc" id="mov-fecha-desde" value="${movFiltroFechaDesde}" onchange="movFiltroFechaDesde=this.value;renderMovs()" style="font-size:.74rem;padding:5px 8px;max-width:130px" title="Desde">
+    <input type="date" class="fc" id="mov-fecha-hasta" value="${movFiltroFechaHasta}" onchange="movFiltroFechaHasta=this.value;renderMovs()" style="font-size:.74rem;padding:5px 8px;max-width:130px" title="Hasta">
+    <button onclick="movSort=movSort==='desc'?'asc':'desc';renderMovs()" class="btn btn-ghost btn-sm" style="font-size:.72rem;padding:4px 10px">
+      ${movSort==='desc'?'↓ Más reciente':'↑ Más antiguo'}
+    </button>
+    <button onclick="movFiltroTipo='';movFiltroFechaDesde='';movFiltroFechaHasta='';renderMovs()" class="btn btn-ghost btn-sm" style="font-size:.72rem;padding:4px 8px" title="Limpiar filtros">✕ Limpiar</button>
+  </div>`;
+  // Filter and sort
+  let ms=[...DB.movimientos];
+  if(movFiltroTipo)ms=ms.filter(m=>m.tipo===movFiltroTipo);
+  if(movFiltroFechaDesde)ms=ms.filter(m=>normFecha(m.fecha)>=movFiltroFechaDesde);
+  if(movFiltroFechaHasta)ms=ms.filter(m=>normFecha(m.fecha)<=movFiltroFechaHasta);
+  ms.sort((a,b)=>{const fa=normFecha(a.fecha)||a.fecha||'';const fb=normFecha(b.fecha)||b.fecha||'';return movSort==='desc'?fb.localeCompare(fa):fa.localeCompare(fb);});
+  if(!ms.length){cont.innerHTML=filterBar+emptyHTML('📋','Sin movimientos con estos filtros');return;}
+  cont.innerHTML=filterBar+`<div class="card"><div class="card-hd">📋 Movimientos (${ms.length})</div>`+ms.map(m=>`
     <div class="li">
       <div class="la ${m.tipo==='entrada'?'bg-c':'bg-b'}">${m.tipo==='entrada'?'📥':'📤'}</div>
-      <div class="lb"><div class="lt">${m.nombre}</div><div class="ls">${m.notas||m.tipo} · ${new Date(m.fecha).toLocaleDateString('es')}</div></div>
+      <div class="lb"><div class="lt">${m.nombre}</div><div class="ls">${m.notas||m.tipo} · ${fDate(normFecha(m.fecha))}</div></div>
       <div class="lm">
         <div class="lamt" style="color:${m.tipo==='entrada'?'var(--sage)':'var(--rust2)'}">${m.tipo==='entrada'?'+':'-'}${R(m.cant)}</div>
         ${m.costo?`<div style="font-size:.66rem;color:var(--ink3)">${money(m.costo)}</div>`:''}
