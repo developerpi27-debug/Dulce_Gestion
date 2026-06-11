@@ -2263,25 +2263,40 @@ function buildPedFilas(p){
   filas=[...filas,...extrasFilas];
   return{filas,precioBase,costoExtras,total:N(p.total)};
 }
-function getOrCreateFacNum(pedId,tipo){
+const _facInFlight=new Map(); // prevent duplicate creation during same session
+async function getOrCreateFacNum(pedId,tipo){
   if(!DB.facturas)DB.facturas=[];
+  // 1. Check local memory first
   const existing=DB.facturas.find(f=>String(f.pedido_id)===String(pedId)&&f.tipo===tipo);
   if(existing)return{num:existing.fac_num,fecha:existing.fecha,hora:existing.hora,isNew:false};
+  // 2. Check in-flight guard (prevent race condition)
+  const key=`${pedId}_${tipo}`;
+  if(_facInFlight.has(key))return _facInFlight.get(key);
+  // 3. Check Supabase directly (handles page-refresh case)
+  try{
+    const url=`${SUPABASE_URL}/rest/v1/facturas?pedido_id=eq.${encodeURIComponent(pedId)}&tipo=eq.${encodeURIComponent(tipo)}&select=*&limit=1`;
+    const r=await fetch(url,{headers:sbHeaders()});
+    if(r.ok){const rows=await r.json();if(rows&&rows.length>0){const f=rows[0];const result={num:f.fac_num,fecha:f.fecha,hora:f.hora,isNew:false};if(!DB.facturas.find(x=>x.id===f.id))DB.facturas.push(f);return result;}}
+  }catch{}
+  // 4. Create new
   const num=nextFacNum();const now=new Date();
   const fecha=now.toLocaleDateString('es',{day:'2-digit',month:'2-digit',year:'numeric'});
   const hora=now.toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit'});
   const rec={id:uid(),pedido_id:pedId,tipo,fac_num:num,fecha,hora,created:now.toISOString()};
+  const result={num,fecha,hora,isNew:true};
+  // Store in-flight guard immediately
+  _facInFlight.set(key,result);
   DB.facturas.push(rec);
-  // Try to save - ignore errors (table may not exist yet or RLS not configured)
-  syncRow('facturas','write',rec,rec.id).catch(e=>console.warn('facturas save:',e.message));
-  return{num,fecha,hora,isNew:true};
+  try{await sbUpsert('facturas',rec);}catch(e){console.warn('facturas save:',e.message);}
+  _facInFlight.delete(key);
+  return result;
 }
-function generarFacturaAnticipo(pedId){const p=PEDS_DB().find(x=>x.id==pedId);if(!p)return;const{num,fecha,hora}=getOrCreateFacNum(pedId,'anticipo');const{filas,precioBase,costoExtras,total}=buildPedFilas(p);const totLines=[...(costoExtras>0?[{label:'Subtotal:',valor:money(precioBase)},{label:'Extras:',valor:money(costoExtras)},{label:'Total pedido:',valor:money(total)}]:[{label:'Total pedido:',valor:money(total)}]),{label:'<span style="color:#c97c1e">✅ Anticipo recibido:</span>',valor:`<span style="color:#2a8040;font-weight:700">${money(p.anticipo)}</span>`},{label:'<b>Saldo contra entrega:</b>',valor:`<b style="color:#c0302a">${money(p.restante)}</b>`,highlight:true}];showFactura('Recibo de Anticipo',facHeader('Recibo de Anticipo',num,fecha,hora)+facClienteRow(p)+facTabla(filas)+facTotales(totLines)+facPie(p.notas));}
-function generarFacturaFinal(pedId){const p=PEDS_DB().find(x=>x.id==pedId);if(!p)return;const{num,fecha,hora}=getOrCreateFacNum(pedId,'final');p.facNum=num;p.updated=new Date().toISOString();syncRow('pedidos','update',p,p.id);const{filas,precioBase,costoExtras,total}=buildPedFilas(p);const totLines=[...(costoExtras>0?[{label:'Subtotal:',valor:money(precioBase)},{label:'Extras:',valor:money(costoExtras)}]:[]),{label:'Subtotal:',valor:money(total)},{label:'Anticipo pagado:',valor:`-${money(p.anticipo)}`},{label:'<b>TOTAL A PAGAR:</b>',valor:`<b>${money(p.restante)}</b>`,highlight:true,color:N(p.restante)===0?'#2a8040':'#c0302a'},...(N(p.restante)===0?[{label:'Estado:',valor:'<span style="color:#2a8040;font-weight:700">✅ PAGADO COMPLETO</span>'}]:[])];showFactura('Factura de Venta',facHeader('Factura de Venta',num,fecha,hora)+facClienteRow(p)+facTabla(filas)+facTotales(totLines)+facPie(p.notas));}
+async function generarFacturaAnticipo(pedId){const p=PEDS_DB().find(x=>x.id==pedId);if(!p)return;const{num,fecha,hora}=await getOrCreateFacNum(pedId,'anticipo');const{filas,precioBase,costoExtras,total}=buildPedFilas(p);const totLines=[...(costoExtras>0?[{label:'Subtotal:',valor:money(precioBase)},{label:'Extras:',valor:money(costoExtras)},{label:'Total pedido:',valor:money(total)}]:[{label:'Total pedido:',valor:money(total)}]),{label:'<span style="color:#c97c1e">✅ Anticipo recibido:</span>',valor:`<span style="color:#2a8040;font-weight:700">${money(p.anticipo)}</span>`},{label:'<b>Saldo contra entrega:</b>',valor:`<b style="color:#c0302a">${money(p.restante)}</b>`,highlight:true}];showFactura('Recibo de Anticipo',facHeader('Recibo de Anticipo',num,fecha,hora)+facClienteRow(p)+facTabla(filas)+facTotales(totLines)+facPie(p.notas));}
+async function generarFacturaFinal(pedId){const p=PEDS_DB().find(x=>x.id==pedId);if(!p)return;const{num,fecha,hora}=await getOrCreateFacNum(pedId,'final');p.facNum=num;p.updated=new Date().toISOString();syncRow('pedidos','update',p,p.id);const{filas,precioBase,costoExtras,total}=buildPedFilas(p);const totLines=[...(costoExtras>0?[{label:'Subtotal:',valor:money(precioBase)},{label:'Extras:',valor:money(costoExtras)}]:[]),{label:'Subtotal:',valor:money(total)},{label:'Anticipo pagado:',valor:`-${money(p.anticipo)}`},{label:'<b>TOTAL A PAGAR:</b>',valor:`<b>${money(p.restante)}</b>`,highlight:true,color:N(p.restante)===0?'#2a8040':'#c0302a'},...(N(p.restante)===0?[{label:'Estado:',valor:'<span style="color:#2a8040;font-weight:700">✅ PAGADO COMPLETO</span>'}]:[])];showFactura('Factura de Venta',facHeader('Factura de Venta',num,fecha,hora)+facClienteRow(p)+facTabla(filas)+facTotales(totLines)+facPie(p.notas));}
 function generarFacturaCotizacion(cotId){const c=DB.cotizaciones.find(x=>x.id==cotId);if(!c)return;const num=nextFacNum(),fecha=new Date().toLocaleDateString('es',{day:'2-digit',month:'2-digit',year:'numeric'});const vence=new Date(Date.now()+(c.valida||7)*86400000).toLocaleDateString('es',{day:'2-digit',month:'2-digit',year:'numeric'});const items=Array.isArray(c.items)?c.items:(typeof c.items==='string'?JSON.parse(c.items||'[]'):[]);const subtotal=items.reduce((s,i)=>s+N(i.precio),0),desc=c.descuento||0,total=subtotal*(1-desc/100);const cliente=`<div style="background:#fdf5e9;border-radius:8px;padding:9px 11px;margin-bottom:12px;border:1px solid rgba(100,60,20,.15)"><div style="font-size:10px;font-weight:700;color:#7a4a20;margin-bottom:4px">CLIENTE</div><div style="font-size:13px;font-weight:700">${c.cliente}</div>${c.evento?`<div style="font-size:11px">Evento: <b>${c.evento}</b></div>`:''}<div style="font-size:11px;color:#888">Válida hasta: <b>${vence}</b></div></div>`;showFactura('Cotización',facHeader('Cotización',num,fecha)+cliente+facTabla(items.map(i=>({desc:i.prod,qty:i.qty||1,precio:i.precioUnit||i.precio,subtotal:i.precio})))+facTotales([{label:'Subtotal:',valor:money(subtotal)},...(desc?[{label:`Descuento (${desc}%):`,valor:`-${money(subtotal*desc/100)}`}]:[]),{label:'<b>TOTAL ESTIMADO:</b>',valor:`<b>${money(total)}</b>`,highlight:true}])+facPie(c.notas));}
-function generarReciboCobro(pedId,monto,metodo,saldoRestante){
+async function generarReciboCobro(pedId,monto,metodo,saldoRestante){
   const p=PEDS_DB().find(x=>x.id==pedId);if(!p)return;
-  const{num,fecha,hora}=getOrCreateFacNum(pedId,'cobro');
+  const{num,fecha,hora}=await getOrCreateFacNum(pedId,'cobro');
   const{filas}=buildPedFilas(p);
   const saldo=saldoRestante!==undefined?saldoRestante:Math.max(0,N(p.restante)-monto);
   const saldoAntesPago=saldo+monto; // restante antes de este pago
@@ -2299,7 +2314,7 @@ function generarReciboCobro(pedId,monto,metodo,saldoRestante){
     ])+facPie(p.notas));
 }
 /* Reimprimir — usa el número original de factura (sin generar nuevo) */
-function reimprimirFactura(pedId){const p=PEDS_DB().find(x=>x.id==pedId);if(!p)return;
+async function reimprimirFactura(pedId){const p=PEDS_DB().find(x=>x.id==pedId);if(!p)return;
   // Look up stored factura record for original date/time/num
   const facRec=(DB.facturas||[]).find(f=>String(f.pedido_id)===String(pedId)&&f.tipo==='final');
   const facAnt=(DB.facturas||[]).find(f=>String(f.pedido_id)===String(pedId)&&f.tipo==='anticipo');
