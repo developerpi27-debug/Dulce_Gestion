@@ -2080,19 +2080,6 @@ function imprimirPNL(){
   ${cont.innerHTML}
   <div style="text-align:center;font-size:.75rem;color:#888;margin-top:20px;border-top:1px solid #ccc;padding-top:8px">Impreso el ${new Date().toLocaleDateString('es')} a las ${new Date().toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit'})}</div>
   <script>window.onload=function(){setTimeout(function(){window.print();},300);}<\/script>
-    <!-- MODAL SOPORTE EDIT -->
-    <div class="mo" id="mo-soporte"><div class="mbox">
-      <div class="mh"><h3>🛟 Información de Soporte</h3><button class="mclose" onclick="cm('mo-soporte')">✕</button></div>
-      <div class="fg"><label class="fl">Nombre del desarrollador / soporte *</label><input class="fc" id="sop-nombre" placeholder="Ej: Carlos Pérez"></div>
-      <div class="fg"><label class="fl">Correo electrónico</label><input class="fc" id="sop-correo" type="email" placeholder="soporte@ejemplo.com"></div>
-      <div class="fg"><label class="fl">Número (WhatsApp / llamadas)</label><input class="fc" id="sop-numero" type="tel" placeholder="18091234567"></div>
-      <div class="fg"><label class="fl">Versión de la app</label><input class="fc" id="sop-version" placeholder="Ej: 2.1.0"></div>
-      <div class="fr2">
-        <button class="btn btn-ghost" onclick="cm('mo-soporte')">Cancelar</button>
-        <button class="btn btn-blue" onclick="saveSoporte()">💾 Guardar</button>
-      </div>
-    </div></div>
-
   </body></html>`;
   const w=window.open('','_blank','width=800,height=900');if(!w){toast('⚠️ Permite ventanas emergentes para imprimir');return;}
   w.document.write(html);w.document.close();
@@ -2871,5 +2858,18 @@ window.addEventListener('load',()=>{
   },1500);
 });
 </script>
+    <!-- MODAL SOPORTE EDIT -->
+    <div class="mo" id="mo-soporte"><div class="mbox">
+      <div class="mh"><h3>🛟 Información de Soporte</h3><button class="mclose" onclick="cm('mo-soporte')">✕</button></div>
+      <div class="fg"><label class="fl">Nombre del desarrollador / soporte *</label><input class="fc" id="sop-nombre" placeholder="Ej: Carlos Pérez"></div>
+      <div class="fg"><label class="fl">Correo electrónico</label><input class="fc" id="sop-correo" type="email" placeholder="soporte@ejemplo.com"></div>
+      <div class="fg"><label class="fl">Número (WhatsApp / llamadas)</label><input class="fc" id="sop-numero" type="tel" placeholder="18091234567"></div>
+      <div class="fg"><label class="fl">Versión de la app</label><input class="fc" id="sop-version" placeholder="Ej: 2.1.0"></div>
+      <div class="fr2">
+        <button class="btn btn-ghost" onclick="cm('mo-soporte')">Cancelar</button>
+        <button class="btn btn-blue" onclick="saveSoporte()">💾 Guardar</button>
+      </div>
+    </div></div>
+
 </body>
 </html>
