@@ -965,7 +965,7 @@ async function syncRow(table,action,data,id){
       });
       // NO enviar 'updated' — Supabase lo maneja internamente en tablas que lo tienen
       // Solo lo enviamos en tablas que lo usan explícitamente como campo de negocio
-      const tablesWithUpdated=['pedidos','inventario','cxc','cxp','solicitudes','perfiles','config'];
+      const tablesWithUpdated=['pedidos','inventario','cxc','cxp','solicitudes','perfiles','config','soporte'];
       if(!tablesWithUpdated.includes(table))delete payload.updated;
       // estatus column - strip if not yet in DB (run ALTER TABLE to enable)
       // For tables that need it: inventario and productos - keep it; others strip
