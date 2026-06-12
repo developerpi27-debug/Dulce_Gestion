@@ -841,7 +841,7 @@ function silentRefresh(){
 const GATEWAY_URL='https://dulcegestion-gateway.developerpi27.workers.dev';
 // APP_TOKEN debe coincidir con APP_SECRET configurado en el Worker
 // Workers Dashboard → dulcegestion-gateway → Settings → Variables → APP_SECRET
-const APP_TOKEN='gr8^RfXfgtJKWLiBIEa3\Kc1u28Y]@[Zj6nNhjl1[PZ@C9Lmggj0oFyZRIJA__H:'; // ← cambiar antes de deploy
+const APP_TOKEN='44ba2fc1e6edc372751e27abb84ab46f36d931e398fa28162e6d7534c7a04e35';
 
 function sbHeaders(extra){
   // Sin credenciales Supabase — el Worker las añade internamente
@@ -916,7 +916,7 @@ function normalizeRow(row){
 }
 
 async function loadAllData(){
-  if(!SUPABASE_URL)return false;
+  if(!GATEWAY_URL)return false;
   try{
     const tables=['config','usuarios','perfiles','inventario','productos',
       'pedidos','extras_pedidos','pagos','ventas','gastos',
