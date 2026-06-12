@@ -721,7 +721,7 @@ let DB={config:[],usuarios:[],perfiles:[],pedidos:[],inventario:[],productos:[],
 let CFG=LS.g('dg_cfg',{nombre:'DulceGestión',eslogan:'',tel:'',email:'',dir:'',redes:'',nit:'',moneda:'RD$',pie:'Gracias por su preferencia.',condiciones:'50% anticipo, saldo contra entrega.',gracias:'¡Gracias por confiar en nosotros!',prefix:'FAC-',facnum:1,licFecha:'',licDias:7,limitePedidos:0,wsNumero:'',refreshInterval:20,inactivityTimeout:0});
 let ECF=LS.g('dg_ecf',{rnc:'',nombreCom:'',regimen:'ordinario',tiposHabilitados:['32','31'],secuencias:{'31':1,'32':1,'33':1,'34':1},rangos:[],itbis:18});
 let SUPABASE_URL=LS.g('dg_url','');
-let SUPABASE_KEY=LS.g('dg_key','');
+let SUPABASE_KEY=''; // no longer used — gateway handles auth
 let SESSION=LS.g('dg_session',null);
 let syncQueue=LS.g('dg_queue',[]);
 let autoRefreshInterval=null;
@@ -838,21 +838,20 @@ function silentRefresh(){
 /* ═══════════════════════════════════════
    SUPABASE API LAYER
 ═══════════════════════════════════════ */
-function sbHeaders(){
-  const key=SUPABASE_KEY||'';
-  // Supabase nuevo formato: sb_publishable_... usa Authorization: Bearer
-  // Formato legacy JWT: eyJ... usa apikey + Authorization
-  const isNewFormat=key.startsWith('sb_');
-  return isNewFormat
-    ?{'Content-Type':'application/json','Authorization':'Bearer '+key,'Prefer':'return=representation'}
-    :{'Content-Type':'application/json','apikey':key,'Authorization':'Bearer '+key,'Prefer':'return=representation'};
+const GATEWAY_URL='https://dulcegestion-gateway.developerpi27.workers.dev';
+// APP_TOKEN debe coincidir con APP_SECRET configurado en el Worker
+// Workers Dashboard → dulcegestion-gateway → Settings → Variables → APP_SECRET
+const APP_TOKEN='aqh^sfNS5:ltv:etnLdKL>m:OpZBFLwFaxSUoWk^u7CwAiXyCyveYCjnO1_MmXge'; // ← cambiar antes de deploy
+
+function sbHeaders(extra){
+  // Sin credenciales Supabase — el Worker las añade internamente
+  return Object.assign({'Content-Type':'application/json','X-App-Token':APP_TOKEN},extra||{});
 }
 
 async function sbSelect(table,params){
-  if(!SUPABASE_URL)throw new Error('Sin conexión Supabase');
   setSyncStatus('syncing');
   try{
-    let url=`${SUPABASE_URL}/rest/v1/${table}?select=*`;
+    let url=`${GATEWAY_URL}/api/data/${table}?select=*`;
     if(params)url+=`&${params}`;
     const r=await fetch(url,{headers:sbHeaders()});
     if(!r.ok)throw new Error(`${r.status} ${await r.text()}`);
@@ -862,32 +861,29 @@ async function sbSelect(table,params){
 }
 
 async function sbUpsert(table,data){
-  if(!SUPABASE_URL)throw new Error('Sin conexión Supabase');
   setSyncStatus('syncing');
   try{
-    const url=`${SUPABASE_URL}/rest/v1/${table}`;
-    const r=await fetch(url,{method:'POST',headers:{...sbHeaders(),'Prefer':'resolution=merge-duplicates,return=minimal'},body:JSON.stringify(Array.isArray(data)?data:[data])});
+    const url=`${GATEWAY_URL}/api/data/${table}`;
+    const r=await fetch(url,{method:'POST',headers:sbHeaders({'Prefer':'resolution=merge-duplicates,return=minimal'}),body:JSON.stringify(Array.isArray(data)?data:[data])});
     if(!r.ok)throw new Error(`${r.status} ${await r.text()}`);
     setSyncStatus('ok');return true;
   }catch(e){setSyncStatus('error');throw e;}
 }
 
 async function sbUpdate(table,id,data){
-  if(!SUPABASE_URL)throw new Error('Sin conexión Supabase');
   setSyncStatus('syncing');
   try{
-    const url=`${SUPABASE_URL}/rest/v1/${table}?id=eq.${encodeURIComponent(id)}`;
-    const r=await fetch(url,{method:'PATCH',headers:{...sbHeaders(),'Prefer':'return=minimal'},body:JSON.stringify(data)});
+    const url=`${GATEWAY_URL}/api/data/${table}?id=eq.${encodeURIComponent(id)}`;
+    const r=await fetch(url,{method:'PATCH',headers:sbHeaders({'Prefer':'return=minimal'}),body:JSON.stringify(data)});
     if(!r.ok)throw new Error(`${r.status} ${await r.text()}`);
     setSyncStatus('ok');return true;
   }catch(e){setSyncStatus('error');throw e;}
 }
 
 async function sbDelete(table,id){
-  if(!SUPABASE_URL)throw new Error('Sin conexión Supabase');
   setSyncStatus('syncing');
   try{
-    const url=`${SUPABASE_URL}/rest/v1/${table}?id=eq.${encodeURIComponent(id)}`;
+    const url=`${GATEWAY_URL}/api/data/${table}?id=eq.${encodeURIComponent(id)}`;
     const r=await fetch(url,{method:'DELETE',headers:sbHeaders()});
     if(!r.ok)throw new Error(`${r.status} ${await r.text()}`);
     setSyncStatus('ok');return true;
@@ -1098,7 +1094,7 @@ async function saveEcf(){
 /* ═══════════════════════════════════════
    SETUP & AUTH
 ═══════════════════════════════════════ */
-async function doSetup(){
+async function doSetup(){toast('⚠️ Configuración deshabilitada en esta versión');return;/* disabled */
   const url=document.getElementById('setup-url').value.trim();
   const key=document.getElementById('setup-key').value.trim();
   const neg=document.getElementById('setup-negocio').value.trim();
@@ -1108,10 +1104,10 @@ async function doSetup(){
   setMsg('setup-msg','Conectando con Supabase...','var(--amber)');
   try{
     // Verificar conexión leyendo la tabla config
-    const r=await fetch(`${SUPABASE_URL}/rest/v1/config?select=id&limit=1`,{headers:sbHeaders()});
+    const r=await fetch(`${GATEWAY_URL}/api/data/config?select=id&limit=1`,{headers:sbHeaders()});
     if(!r.ok)throw new Error(`Error ${r.status} — Verifica la URL y la Key`);
     // Guardar credenciales
-    LS.s('dg_url',SUPABASE_URL);LS.s('dg_key',SUPABASE_KEY);
+    // credentials no longer stored client-side
     if(neg){CFG.nombre=neg;LS.s('dg_cfg',CFG);}
     // Insertar perfiles default y usuario developer si no existen
     const dp=Object.entries(PERM_DEFAULTS).map(([id,perms])=>({id,nombre:id,permisos:perms,updated:today()}));
@@ -1237,7 +1233,7 @@ function changeScriptUrl(){
   if(!confirm('¿Cambiar la conexión? La app se recargará.'))return;
   SUPABASE_URL=nu.replace(/\/$/,'');
   LS.s('dg_url',SUPABASE_URL);
-  if(nk){SUPABASE_KEY=nk;LS.s('dg_key',nk);}
+  // dg_key no longer stored
   toast('✅ Conexión actualizada — recargando...');
   setTimeout(()=>location.reload(),1500);
 }
@@ -2849,8 +2845,7 @@ window.addEventListener('load',()=>{
   document.querySelectorAll('.mo').forEach(mo=>mo.addEventListener('click',e=>{if(e.target===mo)mo.classList.remove('on');}));
   setTimeout(()=>{
     try{document.getElementById('splash').classList.add('gone');setTimeout(()=>{try{document.getElementById('splash').remove();}catch{}},600);}catch{}
-    SUPABASE_URL=LS.g('dg_url','');
-    if(!SUPABASE_URL||!SUPABASE_KEY){document.getElementById('setup-screen').classList.add('on');return;}
+    // SUPABASE_URL no longer used — GATEWAY_URL is the endpoint
     syncQueue=LS.g('dg_queue',[]);
     const saved=LS.g('dg_session',null);
     if(saved){SESSION=saved;loadAllData().then(()=>{const u=DB.usuarios.find(x=>x.username===SESSION.username&&String(x.activo)==='1');if(!u){SESSION=null;LS.s('dg_session',null);showLogin();return;}if(isLicExpired()&&SESSION.perfil!=='developer'){SESSION=null;LS.s('dg_session',null);showLogin();return;}bootApp();flushQueue();});}
