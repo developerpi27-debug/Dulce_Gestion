@@ -1809,10 +1809,17 @@ function renderStock(){
   const sortBtn=(tipo,by,lbl)=>{const s=tipo==='ing'?invSortIng:invSortProd;const act=s.by===by;const arrow=act?(s.dir==='asc'?' ↑':' ↓'):'';return`<button onclick="setInvSort('${tipo}','${by}')" style="background:${act?'var(--amber)':'var(--paper2)'};color:${act?'#fff':'var(--ink3)'};border:1px solid var(--border2);border-radius:6px;padding:2px 9px;font-size:.68rem;cursor:pointer;transition:.15s">${lbl}${arrow}</button>`;};
   const ingList=sortInvItems(ING().filter(i=>(i.tipo||'ingrediente')==='ingrediente'),invSortIng);
   const prodList=sortInvItems(ING().filter(i=>i.tipo==='producto'),invSortProd);
-  const servList=ING().filter(i=>i.tipo==='servicio'&&(!i.estatus||i.estatus==='activo')).sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''));
+  // FIX: include ALL services (active + inactive) so inactive ones remain visible/editable
+  const servList=ING().filter(i=>i.tipo==='servicio').sort((a,b)=>{
+    // Active first, then alphabetical
+    const aInact=(a.estatus==='inactivo')?1:0;
+    const bInact=(b.estatus==='inactivo')?1:0;
+    if(aInact!==bInact)return aInact-bInact;
+    return(a.nombre||'').localeCompare(b.nombre||'');
+  });
   html+=`<div class="card"><div class="card-hd">🧂 Ingredientes${can('editar_inventario')?`<button class="btn btn-amber btn-sm" style="margin-left:auto" onclick="openIng(null,'ingrediente')">+ Ingrediente</button>`:''}</div><div style="display:flex;gap:5px;align-items:center;margin-bottom:8px;flex-wrap:wrap"><span style="font-size:.68rem;color:var(--ink3)">Ordenar:</span>${sortBtn('ing','nombre','Nombre')}${sortBtn('ing','stock','Criticidad')}</div>${ingList.length?ingList.map(renderItem).join(''):`<div style="font-size:.8rem;color:var(--ink3);font-style:italic">Sin ingredientes</div>`}</div>`;
   html+=`<div class="card"><div class="card-hd">📦 Productos${can('editar_inventario')?`<button class="btn btn-amber btn-sm" style="margin-left:auto" onclick="openIng(null,'producto')">+ Producto</button>`:''}</div><div style="display:flex;gap:5px;align-items:center;margin-bottom:8px;flex-wrap:wrap"><span style="font-size:.68rem;color:var(--ink3)">Ordenar:</span>${sortBtn('prod','nombre','Nombre')}${sortBtn('prod','stock','Criticidad')}</div>${prodList.length?prodList.map(renderItem).join(''):`<div style="font-size:.8rem;color:var(--ink3);font-style:italic">Sin productos</div>`}</div>`;
-  html+=`<div class="card"><div class="card-hd">🛎 Servicios${can('editar_inventario')?`<button class="btn btn-amber btn-sm" style="margin-left:auto" onclick="openIng(null,'servicio')">+ Servicio</button>`:''}</div>${servList.length?servList.map(i=>{const codStr=i.codigoProd?`<span style="font-size:.6rem;color:var(--ink3);background:var(--paper3);border:1px solid var(--border);border-radius:4px;padding:1px 4px;margin-left:4px">🏷 ${i.codigoProd}</span>`:'';const pvStr=N(i.precioVenta)>0?`PV: ${money(i.precioVenta)}`:'Sin precio';return`<div class="ibr"><div style="font-size:1rem">🛎</div><div class="ibr-body"><div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:.82rem;font-weight:700">${i.nombre}${codStr}</span><span style="font-size:.82rem;font-weight:700;color:var(--sage)">${pvStr}</span></div><div style="font-size:.62rem;color:var(--ink3);margin-top:2px">Servicio · sin control de stock</div></div>${can('editar_inventario')?`<button onclick="openIng(${i.id})" style="background:none;border:none;color:var(--amber);cursor:pointer;font-size:.9rem;padding:3px">✏️</button>`:''}</div>`;}).join(''):`<div style="font-size:.8rem;color:var(--ink3);font-style:italic">Sin servicios</div>`}</div>`;
+  html+=`<div class="card"><div class="card-hd">🛎 Servicios${can('editar_inventario')?`<button class="btn btn-amber btn-sm" style="margin-left:auto" onclick="openIng(null,'servicio')">+ Servicio</button>`:''}</div>${servList.length?servList.map(i=>{const inact=i.estatus==='inactivo';const codStr=i.codigoProd?`<span style="font-size:.6rem;color:var(--ink3);background:var(--paper3);border:1px solid var(--border);border-radius:4px;padding:1px 4px;margin-left:4px">🏷 ${i.codigoProd}</span>`:'';const pvStr=N(i.precioVenta)>0?`PV: ${money(i.precioVenta)}`:'Sin precio';return`<div class="ibr" style="${inact?'opacity:.65;background:rgba(192,48,42,.04);border-left:3px solid var(--danger);':''}"><div style="font-size:1rem">${inact?'⛔':'🛎'}</div><div class="ibr-body"><div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:.82rem;font-weight:700;${inact?'color:var(--ink3);text-decoration:line-through;':''}">${i.nombre}${codStr}</span><span style="font-size:.82rem;font-weight:700;color:${inact?'var(--danger)':'var(--sage)'}">${inact?'INACTIVO':pvStr}</span></div><div style="font-size:.62rem;color:var(--ink3);margin-top:2px">Servicio · sin control de stock${inact?' · <span style="color:var(--danger);font-weight:700">editar para reactivar</span>':''}</div></div>${can('editar_inventario')?`<button onclick="openIng(${i.id})" style="background:none;border:none;color:${inact?'var(--rust2)':'var(--amber)'};cursor:pointer;font-size:.9rem;padding:3px" title="${inact?'Reactivar servicio':'Editar'}">${inact?'🔄':'✏️'}</button>`:''}</div>`;}).join(''):`<div style="font-size:.8rem;color:var(--ink3);font-style:italic">Sin servicios</div>`}</div>`;
   cont.innerHTML=html;
 }
 function toggleTipoInv(tipo){const isServ=tipo==='servicio';const stockRow=document.getElementById('ing-stock-row');const minmaxRow=document.getElementById('ing-minmax-row');if(stockRow)stockRow.style.display=isServ?'none':'';if(minmaxRow)minmaxRow.style.display=isServ?'none':'';}
@@ -2491,28 +2498,45 @@ function buildPedFilas(p){
 const _facInFlight=new Map(); // prevent duplicate creation during same session
 async function getOrCreateFacNum(pedId,tipo){
   if(!DB.facturas)DB.facturas=[];
-  // 1. Check local memory first
-  const existing=DB.facturas.find(f=>String(f.pedido_id)===String(pedId)&&f.tipo===tipo);
-  if(existing)return{num:existing.fac_num,fecha:existing.fecha,hora:existing.hora,isNew:false};
-  // 2. Check in-flight guard (prevent race condition)
   const key=`${pedId}_${tipo}`;
+  // 1. In-flight guard: if creation already in progress for this pedido+tipo, return it
   if(_facInFlight.has(key))return _facInFlight.get(key);
-  // 3. Check Supabase directly (handles page-refresh case)
+  // 2. SIEMPRE consultar Supabase primero — es la fuente de verdad.
+  //    Confiar solo en DB.facturas local es inseguro: el auto-refresh puede
+  //    reemplazar DB.facturas despues de insertar un registro nuevo pero antes
+  //    del siguiente render, haciendo que la cache local pierda el registro
+  //    y dispare un numero de factura duplicado.
   try{
-    const url=`${SUPABASE_URL}/rest/v1/facturas?pedido_id=eq.${encodeURIComponent(pedId)}&tipo=eq.${encodeURIComponent(tipo)}&select=*&limit=1`;
+    const url=`${SUPABASE_URL}/rest/v1/facturas?pedido_id=eq.${encodeURIComponent(pedId)}&tipo=eq.${encodeURIComponent(tipo)}&select=*&order=created.asc&limit=1`;
     const r=await fetch(url,{headers:sbHeaders()});
-    if(r.ok){const rows=await r.json();if(rows&&rows.length>0){const f=rows[0];const result={num:f.fac_num,fecha:f.fecha,hora:f.hora,isNew:false};if(!DB.facturas.find(x=>x.id===f.id))DB.facturas.push(f);return result;}}
-  }catch{}
-  // 4. Create new
+    if(r.ok){
+      const rows=await r.json();
+      if(rows&&rows.length>0){
+        const f=rows[0];
+        // Sincronizar de vuelta al cache local para mantener consistencia
+        const idx=DB.facturas.findIndex(x=>x.id===f.id);
+        if(idx===-1)DB.facturas.push(f); else DB.facturas[idx]=f;
+        console.log(`[Facturas] Reutilizando ${tipo} existente: ${f.fac_num} (ped ${pedId})`);
+        return{num:f.fac_num,fecha:f.fecha,hora:f.hora,isNew:false};
+      }
+    }
+  }catch(e){
+    // Supabase no disponible — fallback al cache local antes de crear nuevo
+    console.warn('[Facturas] Supabase no disponible, usando cache local:',e.message);
+    const cached=DB.facturas.find(f=>String(f.pedido_id)===String(pedId)&&f.tipo===tipo);
+    if(cached)return{num:cached.fac_num,fecha:cached.fecha,hora:cached.hora,isNew:false};
+  }
+  // 3. No encontrado en ninguna parte — crear nuevo registro
   const num=nextFacNum();const now=new Date();
   const fecha=now.toLocaleDateString('es',{day:'2-digit',month:'2-digit',year:'numeric'});
   const hora=now.toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit'});
   const rec={id:uid(),pedido_id:pedId,tipo,fac_num:num,fecha,hora,created:now.toISOString()};
   const result={num,fecha,hora,isNew:true};
-  // Store in-flight guard immediately
+  // Registrar in-flight guard ANTES del save async para bloquear llamadas concurrentes
   _facInFlight.set(key,result);
   DB.facturas.push(rec);
-  try{await sbUpsert('facturas',rec);}catch(e){console.warn('facturas save:',e.message);}
+  try{await sbUpsert('facturas',rec);console.log(`[Facturas] Nueva factura ${tipo} creada: ${num} (ped ${pedId})`);}
+  catch(e){console.warn('[Facturas] Error guardando en Supabase:',e.message);}
   _facInFlight.delete(key);
   return result;
 }
