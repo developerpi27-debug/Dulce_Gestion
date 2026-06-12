@@ -1538,7 +1538,7 @@ async function upsertExtrasPedido(pedidoId,extras){
   const eid='ext_'+pedidoId;
   // Delete by pedido_id column (more reliable than id)
   try{
-    const url=`${SUPABASE_URL}/rest/v1/extras_pedidos?pedido_id=eq.${encodeURIComponent(pedidoId)}`;
+    const url=`${GATEWAY_URL}/api/data/extras_pedidos?pedido_id=eq.${encodeURIComponent(pedidoId)}`;
     await fetch(url,{method:'DELETE',headers:sbHeaders()});
   }catch{}
   // Small delay to ensure delete completes
@@ -1546,7 +1546,7 @@ async function upsertExtrasPedido(pedidoId,extras){
   const er={id:eid,pedido_id:pedidoId,extras,created:new Date().toISOString()};
   try{
     // Use plain INSERT (not upsert) since we just deleted
-    const url=`${SUPABASE_URL}/rest/v1/extras_pedidos`;
+    const url=`${GATEWAY_URL}/api/data/extras_pedidos`;
     const r=await fetch(url,{method:'POST',headers:{...sbHeaders(),'Prefer':'return=minimal'},body:JSON.stringify([er])});
     if(!r.ok){const t=await r.text();console.warn('extras_pedidos insert:',r.status,t);}
   }catch(e){
@@ -2507,7 +2507,7 @@ async function getOrCreateFacNum(pedId,tipo){
   //    del siguiente render, haciendo que la cache local pierda el registro
   //    y dispare un numero de factura duplicado.
   try{
-    const url=`${SUPABASE_URL}/rest/v1/facturas?pedido_id=eq.${encodeURIComponent(pedId)}&tipo=eq.${encodeURIComponent(tipo)}&select=*&order=created.asc&limit=1`;
+    const url=`${GATEWAY_URL}/api/data/facturas?pedido_id=eq.${encodeURIComponent(pedId)}&tipo=eq.${encodeURIComponent(tipo)}&select=*&order=created.asc&limit=1`;
     const r=await fetch(url,{headers:sbHeaders()});
     if(r.ok){
       const rows=await r.json();
