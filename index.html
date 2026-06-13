@@ -1115,7 +1115,7 @@ async function syncRow(table,action,data,id){
       });
       // NO enviar 'updated' — Supabase lo maneja internamente en tablas que lo tienen
       // Solo lo enviamos en tablas que lo usan explícitamente como campo de negocio
-      const tablesWithUpdated=['pedidos','inventario','cxc','cxp','solicitudes','perfiles','config','soporte'];
+      const tablesWithUpdated=['pedidos','inventario','cxc','cxp','solicitudes','perfiles','config','soporte','ecf_envios','ecf_anulaciones','gastos','facturas'];
       if(!tablesWithUpdated.includes(table))delete payload.updated;
       // estatus column - strip if not yet in DB (run ALTER TABLE to enable)
       // For tables that need it: inventario and productos - keep it; others strip
@@ -1137,6 +1137,34 @@ async function syncRow(table,action,data,id){
       if('costoExtraEntrega' in payload){payload.costo_extra_entrega=payload.costoExtraEntrega;delete payload.costoExtraEntrega;}
       if('facNum' in payload){payload.fac_num=payload.facNum;delete payload.facNum;}
       if('lastLogin' in payload){payload.last_login=payload.lastLogin||null;delete payload.lastLogin;}
+      // ventaCaja (inventario)
+      if('ventaCaja' in payload){payload.venta_caja=payload.ventaCaja;delete payload.ventaCaja;}
+      // DGII 606 gasto fields
+      if('rncProv' in payload){payload.rnc_prov=payload.rncProv;delete payload.rncProv;}
+      if('ncfProv' in payload){payload.ncf_prov=payload.ncfProv;delete payload.ncfProv;}
+      if('ncfMod' in payload){payload.ncf_mod=payload.ncfMod;delete payload.ncfMod;}
+      if('tipoBienes' in payload){payload.tipo_bienes=payload.tipoBienes;delete payload.tipoBienes;}
+      if('itbisFacturado' in payload){payload.itbis_facturado=payload.itbisFacturado;delete payload.itbisFacturado;}
+      if('itbisRetenido' in payload){payload.itbis_retenido=payload.itbisRetenido;delete payload.itbisRetenido;}
+      if('isrRetenido' in payload){payload.isr_retenido=payload.isrRetenido;delete payload.isrRetenido;}
+      if('formaPago606' in payload){payload.forma_pago_606=payload.formaPago606;delete payload.formaPago606;}
+      // ECF envios fields
+      if('rncEmisor' in payload){payload.rnc_emisor=payload.rncEmisor;delete payload.rncEmisor;}
+      if('nombreEmisor' in payload){payload.nombre_emisor=payload.nombreEmisor;delete payload.nombreEmisor;}
+      if('rncReceptor' in payload){payload.rnc_receptor=payload.rncReceptor;delete payload.rncReceptor;}
+      if('nombreReceptor' in payload){payload.nombre_receptor=payload.nombreReceptor;delete payload.nombreReceptor;}
+      if('itbisRate' in payload){payload.itbis_rate=payload.itbisRate;delete payload.itbisRate;}
+      if('codigoSeguridad' in payload){payload.codigo_seguridad=payload.codigoSeguridad;delete payload.codigoSeguridad;}
+      if('qrUrl' in payload){payload.qr_url=payload.qrUrl;delete payload.qrUrl;}
+      if('xmlStr' in payload){payload.xml_str=payload.xmlStr;delete payload.xmlStr;}
+      if('trackId' in payload){payload.track_id=payload.trackId;delete payload.trackId;}
+      if('respuestaDgii' in payload){payload.respuesta_dgii=payload.respuestaDgii;delete payload.respuestaDgii;}
+      if('fechaRespuesta' in payload){payload.fecha_respuesta=payload.fechaRespuesta;delete payload.fechaRespuesta;}
+      // ECF anulaciones fields
+      if('ecfEnvioId' in payload){payload.ecf_envio_id=payload.ecfEnvioId;delete payload.ecfEnvioId;}
+      if('razonAnulacion' in payload){payload.razon_anulacion=payload.razonAnulacion;delete payload.razonAnulacion;}
+      if('fechaAnulacion' in payload){payload.fecha_anulacion=payload.fechaAnulacion;delete payload.fechaAnulacion;}
+      if('tipoCf' in payload){payload.tipo_cf=payload.tipoCf;delete payload.tipoCf;}
       // Convertir strings vacíos en campos de fecha/timestamp a null
       ['last_login','fecha_deseada','vencimiento'].forEach(f=>{if(payload[f]==='')payload[f]=null;});
       // Fechas cortas
@@ -3413,7 +3441,7 @@ async function emitirEcf(){
     ${CFG.gracias?`<div style="font-size:12px;font-weight:700;color:#c97c1e;margin-top:8px;font-family:Georgia,serif">${CFG.gracias}</div>`:''}
   </div>`;
 
-  cm('mo-ecf-emit');
+  cm('mo-cobro');
   showFactura(`e-CF ${tipoCod} — ${tipoLabel}`,html);
 
   // Generate QR code (using qrcode.js from CDN)
