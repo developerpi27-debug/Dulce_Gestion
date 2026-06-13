@@ -1,4 +1,74 @@
 <!DOCTYPE html>
+<!--
+  ╔══════════════════════════════════════════════════════════════════╗
+  ║  SUPABASE MIGRATION — Run this SQL in Supabase SQL Editor        ║
+  ╚══════════════════════════════════════════════════════════════════╝
+
+  -- Table: ecf_envios (e-CF emitidos y su estado DGII)
+  CREATE TABLE IF NOT EXISTS ecf_envios (
+    id TEXT PRIMARY KEY,
+    pedido_id TEXT,
+    ncf TEXT NOT NULL,
+    tipo_cf TEXT NOT NULL,
+    rnc_emisor TEXT,
+    nombre_emisor TEXT,
+    rnc_receptor TEXT DEFAULT '',
+    nombre_receptor TEXT,
+    subtotal NUMERIC(12,2) DEFAULT 0,
+    itbis NUMERIC(12,2) DEFAULT 0,
+    total NUMERIC(12,2) DEFAULT 0,
+    itbis_rate NUMERIC(5,2) DEFAULT 18,
+    codigo_seguridad TEXT,
+    qr_url TEXT,
+    xml_str TEXT,
+    fecha TEXT,
+    hora TEXT,
+    estado TEXT DEFAULT 'pendiente_firma',
+    track_id TEXT DEFAULT '',
+    respuesta_dgii TEXT DEFAULT '',
+    fecha_respuesta TEXT DEFAULT '',
+    created TIMESTAMPTZ DEFAULT NOW(),
+    updated TIMESTAMPTZ DEFAULT NOW()
+  );
+  ALTER TABLE ecf_envios ENABLE ROW LEVEL SECURITY;
+  CREATE POLICY "service_role_ecf_envios" ON ecf_envios USING (true) WITH CHECK (true);
+
+  -- Table: ecf_anulaciones (NCF anulados — Formato 608)
+  CREATE TABLE IF NOT EXISTS ecf_anulaciones (
+    id TEXT PRIMARY KEY,
+    ecf_envio_id TEXT REFERENCES ecf_envios(id),
+    ncf TEXT NOT NULL,
+    rnc_emisor TEXT,
+    tipo_cf TEXT,
+    razon_anulacion TEXT NOT NULL,
+    fecha_anulacion TEXT NOT NULL,
+    estado TEXT DEFAULT 'pendiente',
+    track_id TEXT DEFAULT '',
+    created TIMESTAMPTZ DEFAULT NOW()
+  );
+  ALTER TABLE ecf_anulaciones ENABLE ROW LEVEL SECURITY;
+  CREATE POLICY "service_role_ecf_anulaciones" ON ecf_anulaciones USING (true) WITH CHECK (true);
+
+  -- Add DGII 606 columns to gastos table (if they don't exist)
+  ALTER TABLE gastos ADD COLUMN IF NOT EXISTS rnc_prov TEXT DEFAULT '';
+  ALTER TABLE gastos ADD COLUMN IF NOT EXISTS ncf_prov TEXT DEFAULT '';
+  ALTER TABLE gastos ADD COLUMN IF NOT EXISTS ncf_mod TEXT DEFAULT '';
+  ALTER TABLE gastos ADD COLUMN IF NOT EXISTS tipo_bienes TEXT DEFAULT '';
+  ALTER TABLE gastos ADD COLUMN IF NOT EXISTS itbis_facturado NUMERIC(12,2) DEFAULT 0;
+  ALTER TABLE gastos ADD COLUMN IF NOT EXISTS itbis_retenido NUMERIC(12,2) DEFAULT 0;
+  ALTER TABLE gastos ADD COLUMN IF NOT EXISTS isr_retenido NUMERIC(12,2) DEFAULT 0;
+  ALTER TABLE gastos ADD COLUMN IF NOT EXISTS forma_pago_606 TEXT DEFAULT '1';
+
+  -- Cloudflare Worker: add these Secrets in Cloudflare Dashboard
+  --   CERT_P12_BASE64  = base64 de tu certificado .p12 DGII
+  --   CERT_PASS        = contraseña del certificado
+  --
+  -- Worker endpoints needed (add to dulcegestion-gateway worker):
+  --   POST /api/ecf/enviar    { xml, envioId, certMode, certUrl, certPass }
+  --   GET  /api/ecf/estado/:trackId
+  --   POST /api/ecf/anular    { ncf, rncEmisor, razon, anulacionId }
+-->
+
 <html lang="es">
 <head>
 <meta charset="UTF-8">
@@ -298,6 +368,9 @@ select.fc{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
         <button class="tab" onclick="tabR('pnl',this)">Resultados</button>
         <button class="tab" onclick="tabR('productos',this)">Productos</button>
         <button class="tab" onclick="tabR('inventario',this)">Inventario</button>
+        <button class="tab" onclick="tabR('606',this)">606</button>
+        <button class="tab" onclick="tabR('607',this)">607</button>
+        <button class="tab" onclick="tabR('608',this)">608</button>
       </div>
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
         <select class="fc" id="rep-mes-filter" onchange="renderRep(repTab)" style="font-size:.76rem;padding:6px 10px;max-width:155px"></select>
@@ -408,7 +481,30 @@ select.fc{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
         <button class="btn btn-ghost btn-sm" onclick="addEcfTipo()" style="margin-bottom:10px">+ Agregar tipo</button>
         <div style="font-size:.7rem;font-weight:700;color:var(--ink2);margin-bottom:6px">SECUENCIAS ACTUALES</div>
         <div id="ecf-secuencias"></div>
+        <!-- Certificado Digital -->
+        <div class="card" style="margin-top:10px;background:var(--paper2)">
+          <div class="card-hd" style="font-size:.78rem">🔐 Certificado Digital DGII</div>
+          <div class="al al-info" style="margin-bottom:8px;font-size:.72rem"><div class="al-i">ℹ️</div><div><div class="al-t">Opciones para alojar el certificado (.p12/.pfx)</div><div class="al-s"><b>Opción A (recomendada):</b> Súbelo al Cloudflare Worker como Secret (<code>CERT_P12_BASE64</code> y <code>CERT_PASS</code>). Funciona desde cualquier dispositivo.<br><b>Opción B:</b> Alójalo en una URL privada (Supabase Storage privado, GitHub privado, etc.) y pon la URL aquí.<br><b>Nota:</b> Sin certificado el sistema genera el XML y lo guarda en estado "pendiente firma".</div></div></div>
+          <div class="fg"><label class="fl">Modo de firma</label>
+            <select class="fc" id="ecf-cert-mode" onchange="toggleCertMode()">
+              <option value="worker">Worker (recomendado) — cert como Secret en Cloudflare</option>
+              <option value="url">URL privada — cert en storage externo</option>
+              <option value="none">Sin certificado — modo borrador (XML sin firmar)</option>
+            </select>
+          </div>
+          <div id="ecf-cert-url-row" style="display:none">
+            <div class="fg"><label class="fl">URL del certificado .p12/.pfx</label><input class="fc" id="ecf-cert-url" placeholder="https://tu-storage.com/cert.p12"></div>
+            <div class="fg"><label class="fl">Contraseña del certificado</label><input class="fc" id="ecf-cert-pass" type="password" placeholder="Contraseña del .p12"></div>
+          </div>
+          <div id="ecf-cert-worker-info" style="font-size:.72rem;color:var(--ink3);padding:4px 0">✅ El Worker usará el Secret <b>CERT_P12_BASE64</b> configurado en Cloudflare Dashboard → Workers → tu worker → Settings → Variables &amp; Secrets.</div>
+        </div>
         <button class="btn btn-amber btn-block" style="margin-top:10px" onclick="saveEcf()">💾 Guardar ECF</button>
+        <!-- ECF Envíos recientes -->
+        <div style="margin-top:14px">
+          <div style="font-size:.76rem;font-weight:700;color:var(--ink2);margin-bottom:6px">📤 e-CF Emitidos Recientes</div>
+          <div id="ecf-envios-list" style="max-height:260px;overflow-y:auto"></div>
+          <button class="btn btn-ghost btn-sm" style="margin-top:6px" onclick="renderEcfEnvios()">🔄 Actualizar lista</button>
+        </div>
       </div>
 
       <!-- Perfiles -->
@@ -636,6 +732,53 @@ select.fc{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
     <div class="fg"><label class="fl">Fecha</label><input class="fc" id="g-fecha" type="date"></div>
     <div class="fg"><label class="fl">Método de pago</label><select class="fc" id="g-metodo"><option value="Efectivo">💵 Efectivo</option><option value="Transferencia">🏦 Transferencia</option><option value="Tarjeta">💳 Tarjeta</option></select></div>
   </div>
+  <!-- DGII 606 fields -->
+  <details id="g-dgii-section" style="margin-bottom:10px">
+    <summary style="font-size:.74rem;font-weight:700;color:var(--amber);cursor:pointer;padding:6px 0">🇩🇴 Datos DGII (606) — opcional</summary>
+    <div style="padding:8px 0 0">
+      <div class="fr2">
+        <div class="fg"><label class="fl">RNC / Cédula Proveedor</label><input class="fc" id="g-rnc-prov" placeholder="Ej: 1-01-12345-6" maxlength="15"></div>
+        <div class="fg"><label class="fl">NCF recibido</label><input class="fc" id="g-ncf-prov" placeholder="Ej: B0100000123" maxlength="19"></div>
+      </div>
+      <div class="fr2">
+        <div class="fg"><label class="fl">NCF Modificado</label><input class="fc" id="g-ncf-mod" placeholder="Solo si es NC/ND" maxlength="19"></div>
+        <div class="fg"><label class="fl">Tipo Bienes/Servicios</label>
+          <select class="fc" id="g-tipo-bienes">
+            <option value="">— No aplica —</option>
+            <option value="1">01 - Gastos de Personal</option>
+            <option value="2">02 - Gastos por Trabajo, Suministros y Servicios</option>
+            <option value="3">03 - Arrendamientos</option>
+            <option value="4">04 - Gastos de Activos Fijos</option>
+            <option value="5">05 - Representación y Gastos de Viaje</option>
+            <option value="6">06 - Gastos de Seguros</option>
+            <option value="7">07 - Gastos Financieros</option>
+            <option value="8">08 - Gastos Extraordinarios</option>
+            <option value="9">09 - Compras y Gastos que forman parte del Costo de Venta</option>
+            <option value="10">10 - Adquisición de Activos</option>
+            <option value="11">11 - Gastos de Seguros Personales</option>
+          </select>
+        </div>
+      </div>
+      <div class="fr2">
+        <div class="fg"><label class="fl">ITBIS Facturado</label><input class="fc" id="g-itbis-fact" type="number" placeholder="0.00" min="0"></div>
+        <div class="fg"><label class="fl">ITBIS Retenido</label><input class="fc" id="g-itbis-ret" type="number" placeholder="0.00" min="0"></div>
+      </div>
+      <div class="fr2">
+        <div class="fg"><label class="fl">Retención ISR</label><input class="fc" id="g-isr-ret" type="number" placeholder="0.00" min="0"></div>
+        <div class="fg"><label class="fl">Forma de Pago</label>
+          <select class="fc" id="g-forma-pago-606">
+            <option value="1">01 - Efectivo</option>
+            <option value="2">02 - Cheques/Trans./Dep.</option>
+            <option value="3">03 - Tarjeta Débito/Crédito</option>
+            <option value="4">04 - Compra a Crédito</option>
+            <option value="5">05 - Permuta</option>
+            <option value="6">06 - Nota de Crédito</option>
+            <option value="7">07 - Mixto</option>
+          </select>
+        </div>
+      </div>
+    </div>
+  </details>
   <div class="fg"><label class="fl">Notas</label><input class="fc" id="g-notas"></div>
   <button class="btn btn-amber btn-block" onclick="saveGasto()">💾 Registrar Gasto</button>
 </div></div>
@@ -717,9 +860,9 @@ const ECF_TIPOS_DGII=[
    STORAGE & STATE
 ═══════════════════════════════════════ */
 const LS={g:(k,d)=>{try{return JSON.parse(localStorage.getItem(k))??d}catch{return d}},s:(k,v)=>localStorage.setItem(k,JSON.stringify(v))};
-let DB={config:[],usuarios:[],perfiles:[],pedidos:[],inventario:[],productos:[],movimientos:[],cotizaciones:[],gastos:[],pagos:[],ventas:[],solicitudes:[],facturas:[],extras_pedidos:[],cxp:[],cxc:[],soporte:[]};
+let DB={config:[],usuarios:[],perfiles:[],pedidos:[],inventario:[],productos:[],movimientos:[],cotizaciones:[],gastos:[],pagos:[],ventas:[],solicitudes:[],facturas:[],extras_pedidos:[],cxp:[],cxc:[],soporte:[],ecf_envios:[],ecf_anulaciones:[]};
 let CFG=LS.g('dg_cfg',{nombre:'DulceGestión',eslogan:'',tel:'',email:'',dir:'',redes:'',nit:'',moneda:'RD$',pie:'Gracias por su preferencia.',condiciones:'50% anticipo, saldo contra entrega.',gracias:'¡Gracias por confiar en nosotros!',prefix:'FAC-',facnum:1,licFecha:'',licDias:7,limitePedidos:0,wsNumero:'',refreshInterval:20,inactivityTimeout:0});
-let ECF=LS.g('dg_ecf',{rnc:'',nombreCom:'',regimen:'ordinario',tiposHabilitados:['32','31'],secuencias:{'31':1,'32':1,'33':1,'34':1},rangos:[],itbis:18});
+let ECF=LS.g('dg_ecf',{rnc:'',nombreCom:'',regimen:'ordinario',tiposHabilitados:['32','31'],secuencias:{'31':1,'32':1,'33':1,'34':1},rangos:[],itbis:18,certUrl:'',certMode:'worker',certPass:''});
 let SUPABASE_URL=LS.g('dg_url','');
 let SUPABASE_KEY=''; // no longer used — gateway handles auth
 let SESSION=LS.g('dg_session',null);
@@ -920,7 +1063,8 @@ async function loadAllData(){
   try{
     const tables=['config','usuarios','perfiles','inventario','productos',
       'pedidos','extras_pedidos','pagos','ventas','gastos',
-      'cotizaciones','cxc','cxp','solicitudes','alertas','facturas','movimientos','soporte'];
+      'cotizaciones','cxc','cxp','solicitudes','alertas','facturas','movimientos','soporte',
+      'ecf_envios','ecf_anulaciones'];
     const results=await Promise.all(tables.map(t=>sbSelect(t).catch(()=>[])));
     tables.forEach((t,i)=>{
       // Mapear nombre de tabla al nombre de clave en DB
@@ -1085,6 +1229,9 @@ async function saveEcf(){
     if(tipo&&desde&&hasta)rangos.push({tipo,desde,hasta,proximo:Math.max(proximo,desde),vencimiento:vence});
   }
   if(rangos.length)ECF.rangos=rangos;
+  ECF.certMode=document.getElementById('ecf-cert-mode')?.value||'worker';
+  ECF.certUrl=document.getElementById('ecf-cert-url')?.value.trim()||'';
+  ECF.certPass=document.getElementById('ecf-cert-pass')?.value||'';
   LS.s('dg_ecf',ECF);
   await upsertConfig('ecf_config',JSON.stringify(ECF));
   toast('✅ ECF guardado');
@@ -1220,7 +1367,22 @@ function loadConfigForm(){
   }
   const canEcf=can('emitir_ecf')||can('ver_ecf');
   document.getElementById('ecf-card').style.display=canEcf?'':'none';
-  if(canEcf){document.getElementById('ecf-rnc').value=ECF.rnc||'';document.getElementById('ecf-nombre-com').value=ECF.nombreCom||'';document.getElementById('ecf-regimen').value=ECF.regimen||'ordinario';const ir=document.getElementById('ecf-itbis-rate');if(ir)ir.value=ECF.itbis||18;renderEcfTipos();renderEcfRangos();renderEcfSecuencias();}
+  if(canEcf){
+    document.getElementById('ecf-rnc').value=ECF.rnc||'';
+    document.getElementById('ecf-nombre-com').value=ECF.nombreCom||'';
+    document.getElementById('ecf-regimen').value=ECF.regimen||'ordinario';
+    const ir=document.getElementById('ecf-itbis-rate');if(ir)ir.value=ECF.itbis||18;
+    // Cert config
+    const certMode=document.getElementById('ecf-cert-mode');
+    if(certMode)certMode.value=ECF.certMode||'worker';
+    const certUrl=document.getElementById('ecf-cert-url');
+    if(certUrl)certUrl.value=ECF.certUrl||'';
+    const certPass=document.getElementById('ecf-cert-pass');
+    if(certPass)certPass.value=ECF.certPass||'';
+    toggleCertMode();
+    renderEcfTipos();renderEcfRangos();renderEcfSecuencias();
+    renderEcfEnvios();
+  }
   document.getElementById('limite-card').style.display=can('config_limite')?'':'none';
   const lEl=document.getElementById('cfg-limite');if(lEl)lEl.value=CFG.limitePedidos||0;
   const wsEl=document.getElementById('cfg-ws');if(wsEl)wsEl.value=CFG.wsNumero||'';
@@ -2064,7 +2226,22 @@ async function eliminarGasto(id){
   await syncRow('gastos','delete',null,id);
   renderRep('pnl');
 }
-function saveGasto(){const concepto=document.getElementById('g-concepto').value.trim(),monto=N(document.getElementById('g-monto').value);if(!concepto||!monto){toast('❌ Completa concepto y monto');return;}const g={id:uid(),concepto,monto,cat:document.getElementById('g-cat').value,fecha:document.getElementById('g-fecha').value||today(),metodo:document.getElementById('g-metodo')?.value||'Efectivo',notas:document.getElementById('g-notas').value,created:new Date().toISOString()};DB.gastos.push(g);syncRow('gastos','write',g,g.id);cm('mo-gasto');toast('✅ Gasto registrado');['g-concepto','g-monto','g-notas'].forEach(id=>{document.getElementById(id).value='';});if(CUR==='reportes')renderRep('pnl');}
+function saveGasto(){const concepto=document.getElementById('g-concepto').value.trim(),monto=N(document.getElementById('g-monto').value);if(!concepto||!monto){toast('❌ Completa concepto y monto');return;}
+  const g={id:uid(),concepto,monto,cat:document.getElementById('g-cat').value,fecha:document.getElementById('g-fecha').value||today(),metodo:document.getElementById('g-metodo')?.value||'Efectivo',notas:document.getElementById('g-notas').value,created:new Date().toISOString(),
+    // DGII 606 fields
+    rncProv:document.getElementById('g-rnc-prov')?.value.trim()||'',
+    ncfProv:document.getElementById('g-ncf-prov')?.value.trim().toUpperCase()||'',
+    ncfMod:document.getElementById('g-ncf-mod')?.value.trim().toUpperCase()||'',
+    tipoBienes:document.getElementById('g-tipo-bienes')?.value||'',
+    itbisFacturado:N(document.getElementById('g-itbis-fact')?.value)||0,
+    itbisRetenido:N(document.getElementById('g-itbis-ret')?.value)||0,
+    isrRetenido:N(document.getElementById('g-isr-ret')?.value)||0,
+    formaPago606:document.getElementById('g-forma-pago-606')?.value||'1'
+  };
+  DB.gastos.push(g);syncRow('gastos','write',g,g.id);cm('mo-gasto');toast('✅ Gasto registrado');
+  ['g-concepto','g-monto','g-notas','g-rnc-prov','g-ncf-prov','g-ncf-mod','g-itbis-fact','g-itbis-ret','g-isr-ret'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+  const tb=document.getElementById('g-tipo-bienes');if(tb)tb.value='';
+  if(CUR==='reportes')renderRep('pnl');}
 
 /* ═══════════════════════════════════════
    IMPRIMIR ESTADO DE RESULTADOS
@@ -2217,7 +2394,15 @@ function getRepAnio(){return document.getElementById('rep-anio-filter')?.value||
 function buildRepMeses(){const anio=getRepAnio();const sel=document.getElementById('rep-mes-filter');if(!sel)return;const cur=sel.value;sel.innerHTML=['01','02','03','04','05','06','07','08','09','10','11','12'].map(m=>{const lbl=new Date(`${anio}-${m}-02`).toLocaleDateString('es',{month:'long'});const val=`${anio}-${m}`;return`<option value="${val}"${val===cur||(!cur&&val===today().slice(0,7))?'selected':''}>${lbl.charAt(0).toUpperCase()+lbl.slice(1)}</option>`;}).join('');}
 function buildRepAnios(){const sel=document.getElementById('rep-anio-filter');if(!sel)return;const cur=today().slice(0,4);const years=[String(parseInt(cur)-1),cur,String(parseInt(cur)+1)];sel.innerHTML=years.map(y=>`<option value="${y}"${y===cur?'selected':''}>${y}</option>`).join('');}
 function renderRep(tab){
-  const cont=document.getElementById('rep-content');if(!cont)return;
+  const cont=document.getElementById('rep-content');
+  // DGII report tabs handled here
+  if(tab==='606'||tab==='607'||tab==='608'){
+    const mes=document.getElementById('rep-mes-filter')?.value||today().slice(0,7);
+    if(tab==='606')renderReporte606(cont,mes);
+    else if(tab==='607')renderReporte607(cont,mes);
+    else if(tab==='608')renderReporte608(cont,mes);
+    return;
+  }if(!cont)return;
   const filtMes=getRepMes();
   if(tab==='ventas'){
     const l6=[];for(let i=5;i>=0;i--){const d=new Date();d.setDate(1);d.setMonth(d.getMonth()-i);const mStr=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;const lbl=d.toLocaleDateString('es',{month:'short',year:'2-digit'});const mP=(DB.pagos||[]).filter(pg=>{const f=normFecha(pg.fecha);return f&&f.startsWith(mStr)&&pg.tipo!=='cxp-pago'&&N(pg.monto)>0;}).reduce((s,pg)=>s+N(pg.monto),0);l6.push({lbl,mStr,total:mP});}const mx6=Math.max(...l6.map(m=>m.total),1);
@@ -2688,30 +2873,514 @@ function openEcfEmitir(pedId){
 }
 function calcEcfITBIS(){const sub=N(document.getElementById('ecf-emit-sub')?.value);const rate=(ECF.itbis||18)/100;const itbis=sub*rate;const el=document.getElementById('ecf-emit-itbis');if(el)el.value=itbis.toFixed(2);const tel=document.getElementById('ecf-emit-total');if(tel)tel.value=(sub+itbis).toFixed(2);}
 function calcEcfFromTotal(){const total=N(document.getElementById('ecf-emit-total')?.value);const rate=(ECF.itbis||18)/100;const sub=total/(1+rate);const eli=document.getElementById('ecf-emit-itbis');const els=document.getElementById('ecf-emit-sub');if(els)els.value=sub.toFixed(2);if(eli)eli.value=(total-sub).toFixed(2);}
-function emitirEcf(){
+
+/* ═══════════════════════════════════════════════════════════════
+   ECF ENVIOS LIST RENDERER
+═══════════════════════════════════════════════════════════════ */
+function renderEcfEnvios(){
+  const wrap=document.getElementById('ecf-envios-list');if(!wrap)return;
+  const list=(DB.ecf_envios||[]).slice().sort((a,b)=>((b.created||'')>(a.created||''))?1:-1).slice(0,30);
+  if(!list.length){wrap.innerHTML='<div style="font-size:.75rem;color:var(--ink3);font-style:italic">Sin e-CF emitidos aún.</div>';return;}
+  const estadoColor={aceptado:'var(--ok)',rechazado:'var(--danger)',anulado:'var(--ink3)',pendiente_firma:'var(--warn)',enviando:'var(--amber)',en_proceso:'var(--amber)',error_envio:'var(--danger)'};
+  wrap.innerHTML=list.map(e=>{
+    const color=estadoColor[e.estado]||'var(--ink3)';
+    const tipo=ECF_TIPOS_DGII.find(t=>t.codigo==e.tipo_cf);
+    return`<div style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:6px;background:var(--paper2)">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap">
+        <div>
+          <div style="font-size:.78rem;font-weight:700">${e.ncf}</div>
+          <div style="font-size:.68rem;color:var(--ink3)">${tipo?.nombre||'Tipo '+e.tipo_cf} · ${e.nombre_receptor||'—'} · ${fDate(e.fecha)}</div>
+          <div style="font-size:.7rem;color:var(--amber)">${money(N(e.total))}</div>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+          <span style="font-size:.65rem;font-weight:700;color:${color};background:${color}22;padding:2px 7px;border-radius:10px">${(e.estado||'pendiente').replace('_',' ').toUpperCase()}</span>
+          ${e.estado!=='anulado'?`<button onclick="openAnulacionEcf('${e.id}')" style="font-size:.65rem;background:rgba(192,48,42,.1);border:none;color:var(--danger);border-radius:6px;padding:2px 7px;cursor:pointer">🚫 Anular</button>`:''}
+        </div>
+      </div>
+      ${e.track_id?`<div style="font-size:.62rem;color:var(--ink3);margin-top:3px">TrackId: ${e.track_id}</div>`:''}
+    </div>`;
+  }).join('');
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   ECF CERT CONFIG TOGGLE
+═══════════════════════════════════════════════════════════════ */
+function toggleCertMode(){
+  const mode=document.getElementById('ecf-cert-mode')?.value||'worker';
+  const urlRow=document.getElementById('ecf-cert-url-row');
+  const workerInfo=document.getElementById('ecf-cert-worker-info');
+  if(urlRow)urlRow.style.display=mode==='url'?'':'none';
+  if(workerInfo)workerInfo.style.display=mode==='worker'?'':'none';
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   ECF XML GENERATOR
+   Genera el e-CF XML según especificación DGII (versión 1.0)
+═══════════════════════════════════════════════════════════════ */
+function generarXmlECF(datos){
+  // datos: {tipoCod, ncf, rncEmisor, nombreEmisor, regimen,
+  //         rncReceptor, nombreReceptor, fecha, hora,
+  //         subtotal, itbis, total, itbisRate, items:[{desc,qty,precio,itbis}],
+  //         codigoSeguridad, pedidoId}
+  const d=datos;
+  const fechaISO=d.fecha||new Date().toISOString().slice(0,10);
+  const horaISO=d.hora||new Date().toTimeString().slice(0,8);
+  const itemsXml=(d.items||[{desc:d.descripcion||'Servicio',qty:1,precio:d.subtotal,itbis:d.itbis}]).map(i=>`
+    <Item>
+      <NumeroLinea>1</NumeroLinea>
+      <IndicadorFacturacion>1</IndicadorFacturacion>
+      <NombreItem>${escXml(i.desc)}</NombreItem>
+      <IndicadorBienoServicio>2</IndicadorBienoServicio>
+      <CantidadItem>${N(i.qty)||1}</CantidadItem>
+      <TablaSubDescuento/>
+      <PrecioUnitarioItem>${N(i.precio).toFixed(2)}</PrecioUnitarioItem>
+      <TablaImpuestoAdicional/>
+      <MontoItem>${(N(i.precio)*N(i.qty||1)).toFixed(2)}</MontoItem>
+    </Item>`).join('');
+
+  return`<?xml version="1.0" encoding="UTF-8"?>
+<ECF xmlns="http://dgii.gov.do/eCF/docs/ECF"
+     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+     xsi:schemaLocation="http://dgii.gov.do/eCF/docs/ECF ECF-v1.0.xsd">
+  <Encabezado>
+    <Version>1.0</Version>
+    <CodigoSeguridadECF>${escXml(d.codigoSeguridad)}</CodigoSeguridadECF>
+  </Encabezado>
+  <Comprobante>
+    <ECF>
+      <Encabezado>
+        <IdDoc>
+          <TipoCF>${escXml(d.tipoCod)}</TipoCF>
+          <eNCF>${escXml(d.ncf)}</eNCF>
+          <FechaVencimientoSecuencia>${escXml(d.fechaVence||'')}</FechaVencimientoSecuencia>
+          <IndicadorMontoGravado>1</IndicadorMontoGravado>
+          <TipoIngresos>1</TipoIngresos>
+          <TipoPago>1</TipoPago>
+          <FechaPago>${fechaISO}</FechaPago>
+          <FechaEmision>${fechaISO}</FechaEmision>
+          <HoraEmision>${horaISO}</HoraEmision>
+          <FechaVencimiento/>
+        </IdDoc>
+        <Emisor>
+          <RNCEmisor>${escXml(d.rncEmisor)}</RNCEmisor>
+          <RazonSocialEmisor>${escXml(d.nombreEmisor)}</RazonSocialEmisor>
+          <NombreComercialEmisor>${escXml(d.nombreComercial||d.nombreEmisor)}</NombreComercialEmisor>
+          <Sucursal>001</Sucursal>
+          <DireccionEmisor>${escXml(CFG.dir||'')}</DireccionEmisor>
+          <TelefonoEmisor>${escXml(CFG.tel||'')}</TelefonoEmisor>
+          <CorreoEmisor>${escXml(CFG.email||'')}</CorreoEmisor>
+          <RegimenPagosEmisor>${escXml(d.regimen==='ordinario'?'ORDINARIO':'SIMPLIFICADO')}</RegimenPagosEmisor>
+        </Emisor>
+        <Comprador>
+          <RNCComprador>${escXml(d.rncReceptor||'')}</RNCComprador>
+          <RazonSocialComprador>${escXml(d.nombreReceptor)}</RazonSocialComprador>
+          <ContactoComprador>${escXml(d.nombreReceptor)}</ContactoComprador>
+        </Comprador>
+        <Totales>
+          <MontoGravadoTotal>${N(d.subtotal).toFixed(2)}</MontoGravadoTotal>
+          <MontoGravadoI1>${N(d.subtotal).toFixed(2)}</MontoGravadoI1>
+          <MontoExento>0.00</MontoExento>
+          <ITBIS1>${(d.itbisRate||18)}%</ITBIS1>
+          <TotalITBIS1>${N(d.itbis).toFixed(2)}</TotalITBIS1>
+          <TotalITBISRetenido>0.00</TotalITBISRetenido>
+          <TotalITBIS>${N(d.itbis).toFixed(2)}</TotalITBIS>
+          <MontoTotal>${N(d.total).toFixed(2)}</MontoTotal>
+          <MontoNoFacturable>0.00</MontoNoFacturable>
+        </Totales>
+      </Encabezado>
+      <DetallesItems>${itemsXml}
+      </DetallesItems>
+      <SubTotalesInformativosItems>
+        <SubtotalAdicional>
+          <TipoSubtotal>2</TipoSubtotal>
+          <SubTotal>${N(d.subtotal).toFixed(2)}</SubTotal>
+        </SubtotalAdicional>
+      </SubTotalesInformativosItems>
+    </ECF>
+  </Comprobante>
+</ECF>`;
+}
+
+function escXml(s){if(!s&&s!==0)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;');}
+
+/* ═══════════════════════════════════════════════════════════════
+   CÓDIGO DE SEGURIDAD ECF (8 chars alfanumérico)
+═══════════════════════════════════════════════════════════════ */
+function generarCodigoSeguridad(){
+  const chars='ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let code='';
+  const arr=new Uint8Array(8);
+  crypto.getRandomValues(arr);
+  arr.forEach(b=>code+=chars[b%chars.length]);
+  return code;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   QR URL DGII
+   https://ecf.dgii.gov.do/consulta?ncf=...&rncemisor=...
+═══════════════════════════════════════════════════════════════ */
+function buildQrUrl(rncEmisor,ncf,total,fecha){
+  return`https://ecf.dgii.gov.do/consulta?ncf=${encodeURIComponent(ncf)}&rncemisor=${encodeURIComponent(rncEmisor)}&montofacturado=${encodeURIComponent(Number(total).toFixed(2))}&fecha=${encodeURIComponent(fecha)}`;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   ENVIAR ECF AL GATEWAY (firma + envío DGII)
+═══════════════════════════════════════════════════════════════ */
+async function enviarEcfGateway(xmlStr,envioId){
+  try{
+    const r=await fetch(`${GATEWAY_URL}/api/ecf/enviar`,{
+      method:'POST',
+      headers:{...sbHeaders(),'Content-Type':'application/json'},
+      body:JSON.stringify({xml:xmlStr,envioId,certMode:ECF.certMode||'worker',certUrl:ECF.certUrl||'',certPass:ECF.certPass||''})
+    });
+    if(!r.ok){const t=await r.text();throw new Error(`Gateway ${r.status}: ${t}`);}
+    return await r.json(); // {trackId, estado}
+  }catch(e){
+    console.warn('[ECF] Gateway send error:',e.message);
+    return{error:e.message};
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   POLLING TRACKID — verifica estado en segundo plano
+═══════════════════════════════════════════════════════════════ */
+async function pollEcfTrackId(envioId,trackId,maxTries=10){
+  for(let i=0;i<maxTries;i++){
+    await new Promise(r=>setTimeout(r,4000+i*2000)); // 4s, 6s, 8s...
+    try{
+      const r=await fetch(`${GATEWAY_URL}/api/ecf/estado/${encodeURIComponent(trackId)}`,{headers:sbHeaders()});
+      if(!r.ok)continue;
+      const data=await r.json();
+      const estado=(data.estado||data.estado||'').toLowerCase();
+      if(estado==='aceptado'||estado==='rechazado'||estado==='aceptado_condicional'){
+        // Update local DB
+        const env=(DB.ecf_envios||[]).find(e=>e.id===envioId);
+        if(env){env.estado=estado;env.respuestaDgii=JSON.stringify(data);env.fechaRespuesta=new Date().toISOString();syncRow('ecf_envios','update',env,env.id);}
+        if(estado==='aceptado'||estado==='aceptado_condicional'){
+          toast(`✅ e-CF ${estado === 'aceptado_condicional' ? 'aceptado condicionalmente' : 'aceptado'} por DGII`);
+        }else{
+          toast(`❌ e-CF rechazado por DGII: ${data.mensajes?.map(m=>m.valor).join(', ')||'Ver detalle'}`);
+        }
+        return estado;
+      }
+    }catch(e){console.warn('[ECF] Poll error:',e.message);}
+  }
+  console.warn('[ECF] Polling agotado para trackId:',trackId);
+  return'timeout';
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   MODAL ANULACIÓN e-CF
+═══════════════════════════════════════════════════════════════ */
+function openAnulacionEcf(envioId){
+  const env=(DB.ecf_envios||[]).find(e=>e.id===envioId);
+  if(!env){toast('⚠️ ECF no encontrado');return;}
+  const html=`
+    <div class="fg"><label class="fl">NCF a anular</label><input class="fc" value="${env.ncf||''}" readonly style="background:var(--paper2)"></div>
+    <div class="fg"><label class="fl">Razón de anulación</label>
+      <select class="fc" id="anul-razon">
+        <option value="1">01 - Deterioro de Factura Pre-impresa</option>
+        <option value="2">02 - Errores de Impresión (Factura Pre-impresa)</option>
+        <option value="3">03 - Impresión Defectuosa</option>
+        <option value="4">04 - Corrección de la Información</option>
+        <option value="5">05 - Cambio de Productos</option>
+        <option value="6">06 - Devolución de Productos</option>
+        <option value="7">07 - Omisión de Productos</option>
+        <option value="8">08 - Errores en Secuencia de NCF</option>
+        <option value="9">09 - Por Cese de Operaciones</option>
+        <option value="10">10 - Pérdida o Hurto de Talonarios</option>
+      </select>
+    </div>
+    <input type="hidden" id="anul-envio-id" value="${envioId}">`;
+  document.getElementById('mo-anulacion-content').innerHTML=html;
+  om('mo-anulacion');
+}
+
+async function confirmarAnulacionEcf(){
+  const envioId=document.getElementById('anul-envio-id')?.value;
+  const razon=document.getElementById('anul-razon')?.value;
+  if(!envioId||!razon){toast('❌ Completa todos los campos');return;}
+  const env=(DB.ecf_envios||[]).find(e=>e.id===envioId);
+  if(!env){toast('⚠️ ECF no encontrado');return;}
+  const anulacion={
+    id:uid(),ecf_envio_id:envioId,ncf:env.ncf,rnc_emisor:env.rnc_emisor,
+    tipo_cf:env.tipo_cf,razon_anulacion:razon,fecha_anulacion:today(),
+    estado:'pendiente',created:new Date().toISOString()
+  };
+  if(!DB.ecf_anulaciones)DB.ecf_anulaciones=[];
+  DB.ecf_anulaciones.push(anulacion);
+  syncRow('ecf_anulaciones','write',anulacion,anulacion.id);
+  // Mark original as anulado
+  env.estado='anulado';env.updated=new Date().toISOString();
+  syncRow('ecf_envios','update',env,env.id);
+  cm('mo-anulacion');
+  toast('✅ Anulación registrada (608)');
+  // Try to send annulment to DGII via gateway
+  try{
+    const r=await fetch(`${GATEWAY_URL}/api/ecf/anular`,{
+      method:'POST',headers:{...sbHeaders(),'Content-Type':'application/json'},
+      body:JSON.stringify({ncf:env.ncf,rncEmisor:env.rnc_emisor,razon,anulacionId:anulacion.id})
+    });
+    if(r.ok){
+      const data=await r.json();
+      anulacion.trackId=data.trackId;anulacion.estado=data.estado||'enviado';
+      syncRow('ecf_anulaciones','update',anulacion,anulacion.id);
+    }
+  }catch(e){console.warn('[ECF] Anulación gateway error:',e.message);}
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   REPORTES DGII 606 / 607 / 608
+═══════════════════════════════════════════════════════════════ */
+function renderReporte606(cont,mes){
+  // 606 = Compras / Gastos con NCF de proveedor
+  const gastos=(DB.gastos||[]).filter(g=>g.ncfProv&&g.fecha&&normFecha(g.fecha).startsWith(mes));
+  const cxpPagos=(DB.pagos||[]).filter(p=>p.tipo==='cxp-pago'&&p.fecha&&normFecha(p.fecha).startsWith(mes));
+  // Build combined list from gastos that have NCF
+  if(!gastos.length){cont.innerHTML=`<div class="card"><div class="card-hd">📋 Formato 606 — Compras/Gastos</div>${emptyHTML('📋','Sin compras con NCF registradas en este período')}</div>`;return;}
+  const monto606=gastos.reduce((s,g)=>s+N(g.monto),0);
+  const itbis606=gastos.reduce((s,g)=>s+N(g.itbisFacturado),0);
+  const rows=gastos.map(g=>`<tr>
+    <td style="padding:5px 7px;font-size:.75rem;border-bottom:1px solid var(--border)">${g.rncProv||'—'}</td>
+    <td style="padding:5px 7px;font-size:.75rem;border-bottom:1px solid var(--border)">${g.ncfProv}</td>
+    <td style="padding:5px 7px;font-size:.75rem;border-bottom:1px solid var(--border)">${g.ncfMod||''}</td>
+    <td style="padding:5px 7px;font-size:.75rem;border-bottom:1px solid var(--border)">${fDate(normFecha(g.fecha))}</td>
+    <td style="padding:5px 7px;font-size:.75rem;border-bottom:1px solid var(--border);text-align:right">${money(g.monto)}</td>
+    <td style="padding:5px 7px;font-size:.75rem;border-bottom:1px solid var(--border);text-align:right">${money(g.itbisFacturado||0)}</td>
+    <td style="padding:5px 7px;font-size:.75rem;border-bottom:1px solid var(--border);text-align:right">${money(g.itbisRetenido||0)}</td>
+    <td style="padding:5px 7px;font-size:.75rem;border-bottom:1px solid var(--border);text-align:right">${money(g.isrRetenido||0)}</td>
+    <td style="padding:5px 7px;font-size:.75rem;border-bottom:1px solid var(--border)">${['','01','02','03','04','05','06','07','08','09','10','11'][parseInt(g.tipoBienes)||0]||''}</td>
+    <td style="padding:5px 7px;font-size:.75rem;border-bottom:1px solid var(--border)">${g.formaPago606||'01'}</td>
+  </tr>`).join('');
+  cont.innerHTML=`<div class="card"><div class="card-hd">📋 Formato 606 — Compras y Gastos con NCF <span style="font-size:.68rem;font-weight:400;color:var(--ink3)">${mes}</span>
+    <button class="btn btn-blue btn-sm" style="margin-left:auto" onclick="exportar606('${mes}')">⬇️ Exportar TXT</button></div>
+    <div style="font-size:.75rem;color:var(--ink3);margin-bottom:8px">Total compras: <b>${money(monto606)}</b> · ITBIS: <b>${money(itbis606)}</b> · Registros: <b>${gastos.length}</b></div>
+    <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;min-width:700px">
+      <thead><tr style="background:var(--ink);color:#fff">
+        <th style="padding:6px 7px;font-size:.72rem;text-align:left">RNC Proveedor</th>
+        <th style="padding:6px 7px;font-size:.72rem;text-align:left">NCF</th>
+        <th style="padding:6px 7px;font-size:.72rem;text-align:left">NCF Mod.</th>
+        <th style="padding:6px 7px;font-size:.72rem;text-align:left">Fecha</th>
+        <th style="padding:6px 7px;font-size:.72rem;text-align:right">Monto</th>
+        <th style="padding:6px 7px;font-size:.72rem;text-align:right">ITBIS</th>
+        <th style="padding:6px 7px;font-size:.72rem;text-align:right">ITBIS Ret.</th>
+        <th style="padding:6px 7px;font-size:.72rem;text-align:right">ISR Ret.</th>
+        <th style="padding:6px 7px;font-size:.72rem">Tipo Bien</th>
+        <th style="padding:6px 7px;font-size:.72rem">F.Pago</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+  </div>`;
+}
+
+function renderReporte607(cont,mes){
+  // 607 = Ventas con comprobante fiscal (e-CF emitidos aceptados)
+  const envios=(DB.ecf_envios||[]).filter(e=>e.fecha&&normFecha(e.fecha).startsWith(mes)&&e.estado!=='anulado');
+  if(!envios.length){cont.innerHTML=`<div class="card"><div class="card-hd">📋 Formato 607 — Ventas con Comprobante Fiscal</div>${emptyHTML('📋','Sin e-CF emitidos en este período')}</div>`;return;}
+  const total607=envios.reduce((s,e)=>s+N(e.total),0);
+  const itbis607=envios.reduce((s,e)=>s+N(e.itbis),0);
+  const rows=envios.map(e=>`<tr>
+    <td style="padding:5px 7px;font-size:.75rem;border-bottom:1px solid var(--border)">${e.rnc_receptor||'CF'}</td>
+    <td style="padding:5px 7px;font-size:.75rem;border-bottom:1px solid var(--border)">${e.ncf}</td>
+    <td style="padding:5px 7px;font-size:.75rem;border-bottom:1px solid var(--border)">${fDate(normFecha(e.fecha))}</td>
+    <td style="padding:5px 7px;font-size:.75rem;border-bottom:1px solid var(--border)">${e.tipo_cf}</td>
+    <td style="padding:5px 7px;font-size:.75rem;border-bottom:1px solid var(--border);text-align:right">${money(e.subtotal)}</td>
+    <td style="padding:5px 7px;font-size:.75rem;border-bottom:1px solid var(--border);text-align:right">${money(e.itbis)}</td>
+    <td style="padding:5px 7px;font-size:.75rem;border-bottom:1px solid var(--border);text-align:right">${money(e.total)}</td>
+    <td style="padding:5px 7px;font-size:.75rem;border-bottom:1px solid var(--border)"><span style="padding:2px 7px;border-radius:10px;font-size:.68rem;font-weight:700;background:${e.estado==='aceptado'?'rgba(42,128,64,.15)':e.estado==='rechazado'?'rgba(192,48,42,.15)':'rgba(200,120,30,.15)'};color:${e.estado==='aceptado'?'var(--ok)':e.estado==='rechazado'?'var(--danger)':'var(--warn)'}">${e.estado||'pendiente'}</span></td>
+  </tr>`).join('');
+  cont.innerHTML=`<div class="card"><div class="card-hd">📋 Formato 607 — Ventas con e-CF <span style="font-size:.68rem;font-weight:400;color:var(--ink3)">${mes}</span>
+    <button class="btn btn-blue btn-sm" style="margin-left:auto" onclick="exportar607('${mes}')">⬇️ Exportar TXT</button></div>
+    <div style="font-size:.75rem;color:var(--ink3);margin-bottom:8px">Total ventas: <b>${money(total607)}</b> · ITBIS: <b>${money(itbis607)}</b> · Registros: <b>${envios.length}</b></div>
+    <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;min-width:650px">
+      <thead><tr style="background:var(--ink);color:#fff">
+        <th style="padding:6px 7px;font-size:.72rem;text-align:left">RNC Receptor</th>
+        <th style="padding:6px 7px;font-size:.72rem;text-align:left">NCF</th>
+        <th style="padding:6px 7px;font-size:.72rem;text-align:left">Fecha</th>
+        <th style="padding:6px 7px;font-size:.72rem;text-align:left">Tipo</th>
+        <th style="padding:6px 7px;font-size:.72rem;text-align:right">Subtotal</th>
+        <th style="padding:6px 7px;font-size:.72rem;text-align:right">ITBIS</th>
+        <th style="padding:6px 7px;font-size:.72rem;text-align:right">Total</th>
+        <th style="padding:6px 7px;font-size:.72rem">Estado</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+  </div>`;
+}
+
+function renderReporte608(cont,mes){
+  // 608 = NCF anulados
+  const anulados=(DB.ecf_anulaciones||[]).filter(a=>a.fecha_anulacion&&normFecha(a.fecha_anulacion).startsWith(mes));
+  if(!anulados.length){cont.innerHTML=`<div class="card"><div class="card-hd">📋 Formato 608 — Comprobantes Anulados</div>${emptyHTML('📋','Sin comprobantes anulados en este período')}</div>`;return;}
+  const rows=anulados.map(a=>`<tr>
+    <td style="padding:5px 7px;font-size:.75rem;border-bottom:1px solid var(--border)">${a.tipo_cf}</td>
+    <td style="padding:5px 7px;font-size:.75rem;border-bottom:1px solid var(--border)">${a.ncf}</td>
+    <td style="padding:5px 7px;font-size:.75rem;border-bottom:1px solid var(--border)">${fDate(normFecha(a.fecha_anulacion))}</td>
+    <td style="padding:5px 7px;font-size:.75rem;border-bottom:1px solid var(--border)">${a.razon_anulacion}</td>
+    <td style="padding:5px 7px;font-size:.75rem;border-bottom:1px solid var(--border)"><span style="padding:2px 7px;border-radius:10px;font-size:.68rem;font-weight:700;background:${a.estado==='enviado'?'rgba(42,128,64,.15)':'rgba(200,120,30,.15)'};color:${a.estado==='enviado'?'var(--ok)':'var(--warn)'}">${a.estado||'pendiente'}</span></td>
+  </tr>`).join('');
+  cont.innerHTML=`<div class="card"><div class="card-hd">📋 Formato 608 — Comprobantes Anulados <span style="font-size:.68rem;font-weight:400;color:var(--ink3)">${mes}</span>
+    <button class="btn btn-blue btn-sm" style="margin-left:auto" onclick="exportar608('${mes}')">⬇️ Exportar TXT</button></div>
+    <div style="font-size:.75rem;color:var(--ink3);margin-bottom:8px">Total anulados: <b>${anulados.length}</b></div>
+    <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse">
+      <thead><tr style="background:var(--ink);color:#fff">
+        <th style="padding:6px 7px;font-size:.72rem;text-align:left">Tipo</th>
+        <th style="padding:6px 7px;font-size:.72rem;text-align:left">NCF</th>
+        <th style="padding:6px 7px;font-size:.72rem;text-align:left">Fecha Anulación</th>
+        <th style="padding:6px 7px;font-size:.72rem;text-align:left">Razón</th>
+        <th style="padding:6px 7px;font-size:.72rem">Estado</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+  </div>`;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   EXPORTAR TXT DGII (formato pipe-delimited)
+═══════════════════════════════════════════════════════════════ */
+function exportar606(mes){
+  const gastos=(DB.gastos||[]).filter(g=>g.ncfProv&&g.fecha&&normFecha(g.fecha).startsWith(mes));
+  if(!gastos.length){toast('Sin datos para exportar');return;}
+  const rnc=(ECF.rnc||CFG.nit||'').replace(/[^0-9]/g,'').padEnd(11,'0');
+  const mesNum=mes.replace('-','');
+  let txt=`RNC|${rnc}|${mesNum}|606\n`;
+  gastos.forEach(g=>{
+    const rncP=(g.rncProv||'').replace(/[^0-9]/g,'').padEnd(11,'0');
+    const ncf=(g.ncfProv||'').padEnd(19,' ');
+    const ncfMod=(g.ncfMod||'').padEnd(19,' ');
+    const fecha=(normFecha(g.fecha)||'').replace(/-/g,'');
+    const monto=N(g.monto).toFixed(2);
+    const itbis=N(g.itbisFacturado).toFixed(2);
+    const itbisRet=N(g.itbisRetenido).toFixed(2);
+    const isrRet=N(g.isrRetenido).toFixed(2);
+    const tipoBien=(g.tipoBienes||'').padStart(2,'0');
+    const formaPago=(g.formaPago606||'01').padStart(2,'0');
+    txt+=`${rncP}|${ncf.trim()}|${ncfMod.trim()}|${fecha}|${monto}|${itbis}|${itbisRet}|${isrRet}|${tipoBien}|${formaPago}\n`;
+  });
+  downloadTxt(txt,`606_${rnc}_${mesNum}.txt`);
+}
+
+function exportar607(mes){
+  const envios=(DB.ecf_envios||[]).filter(e=>e.fecha&&normFecha(e.fecha).startsWith(mes)&&e.estado!=='anulado');
+  if(!envios.length){toast('Sin datos para exportar');return;}
+  const rnc=(ECF.rnc||CFG.nit||'').replace(/[^0-9]/g,'').padEnd(11,'0');
+  const mesNum=mes.replace('-','');
+  let txt=`RNC|${rnc}|${mesNum}|607\n`;
+  envios.forEach(e=>{
+    const rncR=(e.rnc_receptor||'').replace(/[^0-9]/g,'').padEnd(11,'0');
+    const ncf=(e.ncf||'').trim();
+    const fecha=(normFecha(e.fecha)||'').replace(/-/g,'');
+    const tipo=(e.tipo_cf||'').padStart(2,'0');
+    const subtotal=N(e.subtotal).toFixed(2);
+    const itbis=N(e.itbis).toFixed(2);
+    const total=N(e.total).toFixed(2);
+    txt+=`${rncR}|${ncf}|${fecha}|${tipo}|${subtotal}|${itbis}|${total}\n`;
+  });
+  downloadTxt(txt,`607_${rnc}_${mesNum}.txt`);
+}
+
+function exportar608(mes){
+  const anulados=(DB.ecf_anulaciones||[]).filter(a=>a.fecha_anulacion&&normFecha(a.fecha_anulacion).startsWith(mes));
+  if(!anulados.length){toast('Sin datos para exportar');return;}
+  const rnc=(ECF.rnc||CFG.nit||'').replace(/[^0-9]/g,'').padEnd(11,'0');
+  const mesNum=mes.replace('-','');
+  let txt=`RNC|${rnc}|${mesNum}|608\n`;
+  anulados.forEach(a=>{
+    const tipo=(a.tipo_cf||'').padStart(2,'0');
+    const ncf=(a.ncf||'').trim();
+    const fecha=(normFecha(a.fecha_anulacion)||'').replace(/-/g,'');
+    const razon=(a.razon_anulacion||'01').padStart(2,'0');
+    txt+=`${tipo}|${ncf}|${fecha}|${razon}\n`;
+  });
+  downloadTxt(txt,`608_${rnc}_${mesNum}.txt`);
+}
+
+function downloadTxt(content,filename){
+  const blob=new Blob([content],{type:'text/plain;charset=utf-8'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=filename;document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(a.href);
+  toast(`📥 ${filename} descargado`);
+}
+
+async function emitirEcf(){
   const tipoCod=document.getElementById('ecf-emit-tipo')?.value;if(!tipoCod)return;
-  const ncf=nextNCF(tipoCod);const tipo=ECF_TIPOS_DGII.find(t=>t.codigo===tipoCod);
+  const ncf=nextNCF(tipoCod);if(!ncf){return;}// nextNCF shows error toast internally
+  const tipo=ECF_TIPOS_DGII.find(t=>t.codigo===tipoCod);
   const p=PEDS_DB().find(x=>x.id==ecfCurrentPedId);if(!p)return;
   const sub=N(document.getElementById('ecf-emit-sub')?.value);
   const itbis=N(document.getElementById('ecf-emit-itbis')?.value);
   const total=N(document.getElementById('ecf-emit-total')?.value);
   const rncCli=document.getElementById('ecf-emit-rnc-cli')?.value.trim();
   const nomCli=document.getElementById('ecf-emit-nombre-cli')?.value.trim()||p.cliente;
-  const fecha=new Date().toLocaleDateString('es',{day:'2-digit',month:'2-digit',year:'numeric'});
+  const now=new Date();
+  const fechaISO=now.toISOString().slice(0,10);
+  const fecha=now.toLocaleDateString('es',{day:'2-digit',month:'2-digit',year:'numeric'});
+  const hora=now.toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  const codigoSeguridad=generarCodigoSeguridad();
+  const qrUrl=buildQrUrl(ECF.rnc,ncf,total,fechaISO);
+
+  // Build items list from pedido
+  const {filas}=buildPedFilas(p);
+  const items=filas.map(f=>({desc:String(f.desc).replace(/<[^>]*>/g,''),qty:f.qty||1,precio:N(f.precio),itbis:N(f.subtotal)*(ECF.itbis||18)/100}));
+
+  // Generate XML
+  const xmlStr=generarXmlECF({
+    tipoCod,ncf,rncEmisor:ECF.rnc,nombreEmisor:ECF.nombreCom||CFG.nombre,
+    nombreComercial:ECF.nombreCom||CFG.nombre,regimen:ECF.regimen||'ordinario',
+    rncReceptor:rncCli,nombreReceptor:nomCli,
+    fecha:fechaISO,hora,subtotal:sub,itbis,total,itbisRate:ECF.itbis||18,
+    items,codigoSeguridad,pedidoId:p.id,
+    fechaVence:''
+  });
+
+  // Save envio record immediately (estado: pendiente_firma)
+  const envioId=uid();
+  const envioRec={
+    id:envioId,pedido_id:p.id,ncf,tipo_cf:tipoCod,
+    rnc_emisor:ECF.rnc,nombre_emisor:ECF.nombreCom||CFG.nombre,
+    rnc_receptor:rncCli||'',nombre_receptor:nomCli,
+    subtotal:sub,itbis,total,itbis_rate:ECF.itbis||18,
+    codigo_seguridad:codigoSeguridad,qr_url:qrUrl,
+    xml_str:xmlStr,fecha:fechaISO,hora,
+    estado:ECF.certMode==='none'?'pendiente_firma':'enviando',
+    track_id:'',respuesta_dgii:'',fecha_respuesta:'',
+    created:now.toISOString()
+  };
+  if(!DB.ecf_envios)DB.ecf_envios=[];
+  DB.ecf_envios.push(envioRec);
+  syncRow('ecf_envios','write',envioRec,envioId);
+
+  // Show invoice immediately with QR and security code
+  const tipoLabel=tipo?.nombre||'Comprobante';
   const html=`
   <div style="border-bottom:2px solid #1c0f00;padding-bottom:12px;margin-bottom:14px">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap">
-      <div><div style="font-size:18px;font-weight:700;color:#1c0f00;font-family:Georgia,serif">🧁 ${ECF.nombreCom||CFG.nombre||'Mi Repostería'}</div><div style="font-size:11px;color:#555">RNC: <b>${ECF.rnc}</b></div><div style="font-size:10px;color:#888">${[CFG.tel,CFG.email,CFG.dir].filter(Boolean).join(' · ')}</div></div>
-      <div style="text-align:right"><div style="font-size:9px;font-weight:700;letter-spacing:.8px;color:#c0302a;text-transform:uppercase">e-Comprobante Fiscal</div><div style="font-size:16px;font-weight:700;color:#c97c1e;font-family:Georgia,serif">${tipo?.nombre||'Comprobante'}</div><div style="font-size:11px;color:#555">NCF: <b style="color:#1c0f00">${ncf}</b></div><div style="font-size:11px;color:#555">Fecha: ${fecha}</div></div>
+      <div>
+        <div style="font-size:18px;font-weight:700;color:#1c0f00;font-family:Georgia,serif">🧁 ${escXml(ECF.nombreCom||CFG.nombre||'Mi Repostería')}</div>
+        <div style="font-size:11px;color:#555">RNC: <b>${ECF.rnc}</b></div>
+        <div style="font-size:10px;color:#888">${[CFG.tel,CFG.email,CFG.dir].filter(Boolean).join(' · ')}</div>
+      </div>
+      <div style="text-align:right">
+        <div style="font-size:9px;font-weight:700;letter-spacing:.8px;color:#c0302a;text-transform:uppercase">e-Comprobante Fiscal</div>
+        <div style="font-size:15px;font-weight:700;color:#c97c1e;font-family:Georgia,serif">${tipoLabel}</div>
+        <div style="font-size:11px;color:#555">NCF: <b style="color:#1c0f00">${ncf}</b></div>
+        <div style="font-size:11px;color:#555">Fecha: ${fecha} · Hora: ${hora.slice(0,5)}</div>
+      </div>
     </div>
   </div>
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
-    <div style="background:#fdf5e9;border-radius:8px;padding:9px 11px;border:1px solid rgba(100,60,20,.15)"><div style="font-size:9px;font-weight:700;letter-spacing:.6px;color:#7a4a20;margin-bottom:4px">EMISOR</div><div style="font-size:12px;font-weight:700">${ECF.nombreCom||CFG.nombre}</div><div style="font-size:10px;color:#555">RNC: ${ECF.rnc}</div><div style="font-size:10px;color:#555">Régimen: ${ECF.regimen||'Ordinario'}</div></div>
-    <div style="background:#fdf5e9;border-radius:8px;padding:9px 11px;border:1px solid rgba(100,60,20,.15)"><div style="font-size:9px;font-weight:700;letter-spacing:.6px;color:#7a4a20;margin-bottom:4px">RECEPTOR</div><div style="font-size:12px;font-weight:700">${nomCli}</div>${rncCli?`<div style="font-size:10px;color:#555">RNC/Cédula: ${rncCli}</div>`:'<div style="font-size:10px;color:#888">Consumidor Final</div>'}</div>
+    <div style="background:#fdf5e9;border-radius:8px;padding:9px 11px;border:1px solid rgba(100,60,20,.15)">
+      <div style="font-size:9px;font-weight:700;letter-spacing:.6px;color:#7a4a20;margin-bottom:4px">EMISOR</div>
+      <div style="font-size:12px;font-weight:700">${ECF.nombreCom||CFG.nombre}</div>
+      <div style="font-size:10px;color:#555">RNC: ${ECF.rnc}</div>
+      <div style="font-size:10px;color:#555">Régimen: ${ECF.regimen||'Ordinario'}</div>
+    </div>
+    <div style="background:#fdf5e9;border-radius:8px;padding:9px 11px;border:1px solid rgba(100,60,20,.15)">
+      <div style="font-size:9px;font-weight:700;letter-spacing:.6px;color:#7a4a20;margin-bottom:4px">RECEPTOR</div>
+      <div style="font-size:12px;font-weight:700">${nomCli}</div>
+      ${rncCli?`<div style="font-size:10px;color:#555">RNC/Cédula: ${rncCli}</div>`:'<div style="font-size:10px;color:#888">Consumidor Final</div>'}
+    </div>
   </div>
-  <table style="width:100%;border-collapse:collapse;margin-bottom:12px"><thead><tr style="background:#1c0f00;color:#fff"><th style="padding:6px 8px;text-align:left;font-size:11px">DESCRIPCIÓN</th><th style="padding:6px 8px;text-align:center;font-size:11px">CANT.</th><th style="padding:6px 8px;text-align:right;font-size:11px">VALOR</th></tr></thead><tbody>
-    <tr><td style="padding:7px 8px;border-bottom:1px solid #eee;font-size:12px"><b>${p.descr}</b>${p.notas?`<br><span style="font-size:10px;color:#888">${p.notas}</span>`:''}</td><td style="padding:7px 8px;border-bottom:1px solid #eee;font-size:12px;text-align:center">${p.qty||1}</td><td style="padding:7px 8px;border-bottom:1px solid #eee;font-size:12px;text-align:right">${money(sub)}</td></tr>
-  </tbody></table>
+  ${facTabla(filas)}
   <div style="display:flex;justify-content:flex-end;margin-bottom:14px">
     <table style="border-collapse:collapse;min-width:220px">
       <tr><td style="padding:3px 10px;font-size:12px;color:#555">Subtotal (sin ITBIS):</td><td style="padding:3px 10px;font-size:12px;text-align:right">${money(sub)}</td></tr>
@@ -2719,13 +3388,55 @@ function emitirEcf(){
       <tr style="border-top:2px solid #1c0f00"><td style="padding:5px 10px;font-size:13px;font-weight:700;color:#1c0f00">TOTAL:</td><td style="padding:5px 10px;font-size:15px;font-weight:700;text-align:right;color:#c97c1e">${money(total)}</td></tr>
     </table>
   </div>
+  <!-- DGII Security Footer -->
+  <div style="border:1.5px solid #1c0f00;border-radius:8px;padding:10px 12px;display:flex;gap:12px;align-items:center;margin-bottom:10px">
+    <div id="ecf-qr-${envioId}" style="width:72px;height:72px;flex-shrink:0;background:#f5f5f5;border:1px solid #ddd;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:.6rem;color:#888;text-align:center">QR DGII</div>
+    <div style="flex:1">
+      <div style="font-size:9px;font-weight:700;letter-spacing:.7px;color:#c0302a;margin-bottom:3px">COMPROBANTE FISCAL ELECTRÓNICO</div>
+      <div style="font-size:10px;color:#555;margin-bottom:2px">Código de seguridad: <b style="font-size:12px;letter-spacing:2px;color:#1c0f00">${codigoSeguridad}</b></div>
+      <div style="font-size:9px;color:#888;word-break:break-all">${qrUrl}</div>
+      <div id="ecf-estado-${envioId}" style="font-size:9px;margin-top:4px;color:${ECF.certMode==='none'?'#c87820':'#2a8040'};font-weight:700">${ECF.certMode==='none'?'⏳ Pendiente de firma — configura certificado DGII':'⏳ Enviando a DGII...'}</div>
+    </div>
+  </div>
   <div style="border-top:1px solid #ddd;padding-top:10px;text-align:center">
-    <div style="font-size:9px;color:#888;margin-bottom:4px">Este comprobante fiscal electrónico (e-CF) fue generado en cumplimiento de la normativa DGII.</div>
-    <div style="font-size:9px;color:#aaa">Conserve este comprobante · ${tipo?.uso||''}</div>
+    <div style="font-size:9px;color:#888;margin-bottom:4px">e-CF emitido en cumplimiento de la normativa DGII · Conserve este comprobante</div>
     ${CFG.gracias?`<div style="font-size:12px;font-weight:700;color:#c97c1e;margin-top:8px;font-family:Georgia,serif">${CFG.gracias}</div>`:''}
   </div>`;
-  resetCobroModal();cm('mo-cobro');
-  showFactura(`e-CF ${tipoCod} — ${tipo?.nombre||''}`,html);
+
+  cm('mo-ecf-emit');
+  showFactura(`e-CF ${tipoCod} — ${tipoLabel}`,html);
+
+  // Generate QR code (using qrcode.js from CDN)
+  setTimeout(()=>{
+    const qrEl=document.getElementById(`ecf-qr-${envioId}`);
+    if(qrEl&&window.QRCode){
+      qrEl.innerHTML='';
+      try{new QRCode(qrEl,{text:qrUrl,width:68,height:68,colorDark:'#1c0f00',colorLight:'#ffffff'});}
+      catch(e){qrEl.innerHTML='<span style="font-size:.55rem">Escanea URL en factura</span>';}
+    }
+  },500);
+
+  // Send to DGII via gateway if cert configured
+  if(ECF.certMode!=='none'){
+    const gatewayResult=await enviarEcfGateway(xmlStr,envioId);
+    if(gatewayResult.error){
+      const estadoEl=document.getElementById(`ecf-estado-${envioId}`);
+      if(estadoEl)estadoEl.innerHTML=`<span style="color:#c0302a">⚠️ Error enviando: ${gatewayResult.error}</span>`;
+      envioRec.estado='error_envio';envioRec.respuesta_dgii=gatewayResult.error;
+      syncRow('ecf_envios','update',envioRec,envioId);
+    }else if(gatewayResult.trackId){
+      envioRec.track_id=gatewayResult.trackId;envioRec.estado='en_proceso';
+      syncRow('ecf_envios','update',envioRec,envioId);
+      // Poll in background
+      pollEcfTrackId(envioId,gatewayResult.trackId).then(estado=>{
+        const estadoEl=document.getElementById(`ecf-estado-${envioId}`);
+        if(estadoEl){
+          const ok=estado==='aceptado'||estado==='aceptado_condicional';
+          estadoEl.innerHTML=`<span style="color:${ok?'#2a8040':estado==='rechazado'?'#c0302a':'#c87820'}">${ok?'✅ Aceptado por DGII':estado==='rechazado'?'❌ Rechazado por DGII':'⏰ Sin respuesta (verificar)' }</span>`;
+        }
+      });
+    }
+  }
 }
 
 /* ═══════════════════════════════════════
@@ -2889,6 +3600,20 @@ window.addEventListener('load',()=>{
         <button class="btn btn-blue" onclick="saveSoporte()">💾 Guardar</button>
       </div>
     </div></div>
+
+<!-- QRCode.js for e-CF QR generation -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+
+<!-- Modal: Anulación e-CF -->
+<div class="mo" id="mo-anulacion"><div class="mbox">
+  <div class="mh"><h3>🚫 Anular Comprobante Fiscal</h3><button class="mclose" onclick="cm('mo-anulacion')">✕</button></div>
+  <div class="al al-warn" style="margin-bottom:10px"><div class="al-i">⚠️</div><div><div class="al-t">Esta acción es irreversible</div><div class="al-s">El NCF quedará registrado como anulado en el 608 y se notificará a la DGII.</div></div></div>
+  <div id="mo-anulacion-content"></div>
+  <div style="display:flex;gap:8px;margin-top:12px">
+    <button class="btn btn-danger btn-block" onclick="confirmarAnulacionEcf()">🚫 Confirmar Anulación</button>
+    <button class="btn btn-ghost" onclick="cm('mo-anulacion')">Cancelar</button>
+  </div>
+</div></div>
 
 </body>
 </html>
