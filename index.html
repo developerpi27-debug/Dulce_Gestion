@@ -1,65 +1,7 @@
 <!DOCTYPE html>
 <!--
-  ╔══════════════════════════════════════════════════════════════════╗
-  ║  SUPABASE MIGRATION — Run this SQL in Supabase SQL Editor        ║
-  ╚══════════════════════════════════════════════════════════════════╝
-
-  -- Table: ecf_envios (e-CF emitidos y su estado DGII)
-  CREATE TABLE IF NOT EXISTS ecf_envios (
-    id TEXT PRIMARY KEY,
-    pedido_id TEXT,
-    ncf TEXT NOT NULL,
-    tipo_cf TEXT NOT NULL,
-    rnc_emisor TEXT,
-    nombre_emisor TEXT,
-    rnc_receptor TEXT DEFAULT '',
-    nombre_receptor TEXT,
-    subtotal NUMERIC(12,2) DEFAULT 0,
-    itbis NUMERIC(12,2) DEFAULT 0,
-    total NUMERIC(12,2) DEFAULT 0,
-    itbis_rate NUMERIC(5,2) DEFAULT 18,
-    codigo_seguridad TEXT,
-    qr_url TEXT,
-    xml_str TEXT,
-    fecha TEXT,
-    hora TEXT,
-    estado TEXT DEFAULT 'pendiente_firma',
-    track_id TEXT DEFAULT '',
-    respuesta_dgii TEXT DEFAULT '',
-    fecha_respuesta TEXT DEFAULT '',
-    created TIMESTAMPTZ DEFAULT NOW(),
-    updated TIMESTAMPTZ DEFAULT NOW()
-  );
-  ALTER TABLE ecf_envios ENABLE ROW LEVEL SECURITY;
-  CREATE POLICY "service_role_ecf_envios" ON ecf_envios USING (true) WITH CHECK (true);
-
-  -- Table: ecf_anulaciones (NCF anulados — Formato 608)
-  CREATE TABLE IF NOT EXISTS ecf_anulaciones (
-    id TEXT PRIMARY KEY,
-    ecf_envio_id TEXT REFERENCES ecf_envios(id),
-    ncf TEXT NOT NULL,
-    rnc_emisor TEXT,
-    tipo_cf TEXT,
-    razon_anulacion TEXT NOT NULL,
-    fecha_anulacion TEXT NOT NULL,
-    estado TEXT DEFAULT 'pendiente',
-    track_id TEXT DEFAULT '',
-    created TIMESTAMPTZ DEFAULT NOW()
-  );
-  ALTER TABLE ecf_anulaciones ENABLE ROW LEVEL SECURITY;
-  CREATE POLICY "service_role_ecf_anulaciones" ON ecf_anulaciones USING (true) WITH CHECK (true);
-
-  -- Add DGII 606 columns to gastos table (if they don't exist)
-  ALTER TABLE gastos ADD COLUMN IF NOT EXISTS rnc_prov TEXT DEFAULT '';
-  ALTER TABLE gastos ADD COLUMN IF NOT EXISTS ncf_prov TEXT DEFAULT '';
-  ALTER TABLE gastos ADD COLUMN IF NOT EXISTS ncf_mod TEXT DEFAULT '';
-  ALTER TABLE gastos ADD COLUMN IF NOT EXISTS tipo_bienes TEXT DEFAULT '';
-  ALTER TABLE gastos ADD COLUMN IF NOT EXISTS itbis_facturado NUMERIC(12,2) DEFAULT 0;
-  ALTER TABLE gastos ADD COLUMN IF NOT EXISTS itbis_retenido NUMERIC(12,2) DEFAULT 0;
-  ALTER TABLE gastos ADD COLUMN IF NOT EXISTS isr_retenido NUMERIC(12,2) DEFAULT 0;
-  ALTER TABLE gastos ADD COLUMN IF NOT EXISTS forma_pago_606 TEXT DEFAULT '1';
-
-  -- Cloudflare Worker: add these Secrets in Cloudflare Dashboard
+ 
+    -- Cloudflare Worker: add these Secrets in Cloudflare Dashboard
   --   CERT_P12_BASE64  = base64 de tu certificado .p12 DGII
   --   CERT_PASS        = contraseña del certificado
   --
@@ -481,9 +423,9 @@ select.fc{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
         <button class="btn btn-ghost btn-sm" onclick="addEcfTipo()" style="margin-bottom:10px">+ Agregar tipo</button>
         <div style="font-size:.7rem;font-weight:700;color:var(--ink2);margin-bottom:6px">SECUENCIAS ACTUALES</div>
         <div id="ecf-secuencias"></div>
-        <!-- Certificado Digital -->
-        <div class="card" style="margin-top:10px;background:var(--paper2)">
-          <div class="card-hd" style="font-size:.78rem">🔐 Certificado Digital DGII</div>
+        <!-- Certificado Digital — solo developer -->
+        ${can('developer')?`<div class="card" style="margin-top:10px;background:var(--paper2);border:1.5px solid rgba(192,48,42,.25)">
+          <div class="card-hd" style="font-size:.78rem">🔐 Certificado Digital DGII <span style="font-size:.65rem;background:rgba(192,48,42,.12);color:var(--danger);border-radius:5px;padding:1px 6px;margin-left:6px">Solo Developer</span></div>
           <div class="al al-info" style="margin-bottom:8px;font-size:.72rem"><div class="al-i">ℹ️</div><div><div class="al-t">Opciones para alojar el certificado (.p12/.pfx)</div><div class="al-s"><b>Opción A (recomendada):</b> Súbelo al Cloudflare Worker como Secret (<code>CERT_P12_BASE64</code> y <code>CERT_PASS</code>). Funciona desde cualquier dispositivo.<br><b>Opción B:</b> Alójalo en una URL privada (Supabase Storage privado, GitHub privado, etc.) y pon la URL aquí.<br><b>Nota:</b> Sin certificado el sistema genera el XML y lo guarda en estado "pendiente firma".</div></div></div>
           <div class="fg"><label class="fl">Modo de firma</label>
             <select class="fc" id="ecf-cert-mode" onchange="toggleCertMode()">
@@ -497,7 +439,7 @@ select.fc{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
             <div class="fg"><label class="fl">Contraseña del certificado</label><input class="fc" id="ecf-cert-pass" type="password" placeholder="Contraseña del .p12"></div>
           </div>
           <div id="ecf-cert-worker-info" style="font-size:.72rem;color:var(--ink3);padding:4px 0">✅ El Worker usará el Secret <b>CERT_P12_BASE64</b> configurado en Cloudflare Dashboard → Workers → tu worker → Settings → Variables &amp; Secrets.</div>
-        </div>
+        </div>`:''}
         <button class="btn btn-amber btn-block" style="margin-top:10px" onclick="saveEcf()">💾 Guardar ECF</button>
         <!-- ECF Envíos recientes -->
         <div style="margin-top:14px">
@@ -994,7 +936,7 @@ function silentRefresh(){
 const GATEWAY_URL='https://dulcegestion-gateway.developerpi27.workers.dev';
 // APP_TOKEN debe coincidir con APP_SECRET configurado en el Worker
 // Workers Dashboard → dulcegestion-gateway → Settings → Variables → APP_SECRET
-const APP_TOKEN='44ba2fc1e6edc372751e27abb84ab46f36d931e398fa28162e6d7534c7a04e35';
+const APP_TOKEN='96053e98fe626bf04783272e2252021e800e4ebc9a3adffa06c7d837913f97b9';
 
 function sbHeaders(extra){
   // Sin credenciales Supabase — el Worker las añade internamente
@@ -2027,12 +1969,77 @@ function openIngTipo(tipo){openIng(null,tipo);}
 function openIng(id,defaultTipo){const i=id?ING().find(x=>x.id==id):null;document.getElementById('ing-titulo').textContent=i?'Editar':'Nuevo';document.getElementById('i-edit-id').value=id||'';document.getElementById('i-nombre').value=i?.nombre||'';document.getElementById('i-codigo').value=i?.codigoProd||'';document.getElementById('i-cant').value=i?.cant||'';document.getElementById('i-unidad').value=i?.unidad||'kg';const tipo=i?.tipo||defaultTipo||'ingrediente';document.getElementById('i-tipo').value=tipo;toggleTipoInv(tipo);document.getElementById('i-min').value=i?.min||'';document.getElementById('i-max').value=i?.max||'';document.getElementById('i-costo').value=i?.costo||'';document.getElementById('i-pventa').value=i?.precioVenta||'';const es=document.getElementById('i-estatus');if(es)es.value=i?.estatus||'activo';const vc=document.getElementById('i-venta-caja');if(vc)vc.checked=!!(i?.ventaCaja);om('mo-ing');}
 function openIngTipo(tipo){openIng(null);setTimeout(()=>{const el=document.getElementById('i-tipo');if(el)el.value=tipo;},60);}
 function saveIng(){const nombre=document.getElementById('i-nombre').value.trim();if(!nombre){toast('❌ Ingresa un nombre');return;}const eid=parseInt(document.getElementById('i-edit-id').value)||0;const codigoProd=document.getElementById('i-codigo').value.trim()||'';if(codigoProd){const dup=ING().find(x=>x.codigoProd===codigoProd&&x.id!=eid);if(dup){toast('❌ Código ya existe: '+dup.nombre);return;}}const tipoVal=document.getElementById('i-tipo').value||'ingrediente';const isServ=tipoVal==='servicio';const data={nombre,codigoProd,tipo:tipoVal,cant:isServ?0:N(document.getElementById('i-cant').value),unidad:isServ?'':document.getElementById('i-unidad').value,min:isServ?0:N(document.getElementById('i-min').value),max:isServ?0:(N(document.getElementById('i-max').value)||100),costo:N(document.getElementById('i-costo').value),precioVenta:N(document.getElementById('i-pventa').value),estatus:document.getElementById('i-estatus')?.value||'activo',ventaCaja:!!(document.getElementById('i-venta-caja')?.checked),updated:new Date().toISOString()};if(eid){const i=ING().find(x=>x.id==eid);if(i){Object.assign(i,data);syncRow('inventario','update',i,i.id);}}else{const i={id:uid(),...data};DB.inventario.push(i);syncRow('inventario','write',i,i.id);}cm('mo-ing');toast('✅ Guardado');renderStock();}
-function renderMovForm(tipo){const cont=document.getElementById('inv-content');const isEnt=tipo==='entrada';cont.innerHTML=`<div class="card"><div class="card-hd">${isEnt?'📥 Entrada':'📤 Salida'}</div><div class="fg"><label class="fl">Ingrediente *</label><select class="fc" id="mf-ing" onchange="syncMU()">${ING_ASC().filter(i=>i.tipo!=='servicio'&&(!i.estatus||i.estatus==='activo')).map(i=>`<option value="${i.id}">${i.nombre} (${R(i.cant)} ${i.unidad})</option>`).join('')}</select></div><div class="fr2"><div class="fg"><label class="fl">Cantidad</label><input class="fc" id="mf-cant" type="number" step="0.001" oninput="calcCostoEntrada()"></div><div class="fg"><label class="fl">Unidad</label><input class="fc" id="mf-unit" readonly style="background:var(--paper);cursor:not-allowed" placeholder="—"></div></div>${isEnt?`<div class="fg"><label class="fl">Costo unitario ($/unidad)</label><input class="fc" id="mf-costo-unit" type="number" step="0.01" readonly style="background:var(--paper);cursor:not-allowed" placeholder="0.00"></div><div class="fg"><label class="fl">Costo total ($) <span style="font-size:.65rem;color:var(--ink3)">(calculado)</span></label><input class="fc" id="mf-costo" type="number" step="0.01" readonly style="background:var(--paper);cursor:not-allowed" placeholder="0.00"></div>`:''}<div class="fg"><label class="fl">Notas</label><input class="fc" id="mf-notas"></div><button class="btn btn-amber btn-block" onclick="regMov('${tipo}')">💾 Registrar</button></div>`;syncMU();}
+function renderMovForm(tipo){const cont=document.getElementById('inv-content');const isEnt=tipo==='entrada';const dgiiHtml=isEnt?`
+      <!-- DGII 606 campos (opcional) -->
+      <details style="margin-bottom:10px">
+        <summary style="font-size:.74rem;font-weight:700;color:var(--amber);cursor:pointer;padding:6px 0">🇩🇴 Datos DGII 606 — Registrar también como gasto deducible</summary>
+        <div style="padding:8px 0 0">
+          <div class="fr2">
+            <div class="fg"><label class="fl">RNC / Cédula Proveedor</label><input class="fc" id="mf-rnc-prov" placeholder="Ej: 1-01-12345-6" maxlength="15"></div>
+            <div class="fg"><label class="fl">NCF recibido</label><input class="fc" id="mf-ncf-prov" placeholder="Ej: B0100000123" maxlength="19"></div>
+          </div>
+          <div class="fr2">
+            <div class="fg"><label class="fl">NCF Modificado</label><input class="fc" id="mf-ncf-mod" placeholder="Solo si es NC/ND" maxlength="19"></div>
+            <div class="fg"><label class="fl">Tipo Bienes/Servicios</label>
+              <select class="fc" id="mf-tipo-bienes">
+                <option value="">— No aplica —</option>
+                <option value="9">09 - Compras y Gastos del Costo de Venta</option>
+                <option value="4">04 - Gastos de Activos Fijos</option>
+                <option value="2">02 - Trabajo, Suministros y Servicios</option>
+                <option value="3">03 - Arrendamientos</option>
+                <option value="1">01 - Gastos de Personal</option>
+                <option value="5">05 - Representación y Viajes</option>
+                <option value="6">06 - Gastos de Seguros</option>
+                <option value="7">07 - Gastos Financieros</option>
+                <option value="8">08 - Gastos Extraordinarios</option>
+                <option value="10">10 - Adquisición de Activos</option>
+                <option value="11">11 - Seguros Personales</option>
+              </select>
+            </div>
+          </div>
+          <div class="fr2">
+            <div class="fg"><label class="fl">ITBIS Facturado</label><input class="fc" id="mf-itbis-fact" type="number" placeholder="0.00" min="0"></div>
+            <div class="fg"><label class="fl">ITBIS Retenido</label><input class="fc" id="mf-itbis-ret" type="number" placeholder="0.00" min="0"></div>
+          </div>
+          <div class="fr2">
+            <div class="fg"><label class="fl">Retención ISR</label><input class="fc" id="mf-isr-ret" type="number" placeholder="0.00" min="0"></div>
+            <div class="fg"><label class="fl">Forma de Pago</label>
+              <select class="fc" id="mf-forma-pago">
+                <option value="1">01 - Efectivo</option>
+                <option value="2">02 - Cheques/Trans./Dep.</option>
+                <option value="3">03 - Tarjeta Débito/Crédito</option>
+                <option value="4">04 - Compra a Crédito</option>
+                <option value="5">05 - Permuta</option>
+                <option value="6">06 - Nota de Crédito</option>
+                <option value="7">07 - Mixto</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </details>`:'';cont.innerHTML=`<div class="card"><div class="card-hd">${isEnt?'📥 Entrada':'📤 Salida'}</div><div class="fg"><label class="fl">Ingrediente *</label><select class="fc" id="mf-ing" onchange="syncMU()">${ING_ASC().filter(i=>i.tipo!=='servicio'&&(!i.estatus||i.estatus==='activo')).map(i=>`<option value="${i.id}">${i.nombre} (${R(i.cant)} ${i.unidad})</option>`).join('')}</select></div><div class="fr2"><div class="fg"><label class="fl">Cantidad</label><input class="fc" id="mf-cant" type="number" step="0.001" oninput="calcCostoEntrada()"></div><div class="fg"><label class="fl">Unidad</label><input class="fc" id="mf-unit" readonly style="background:var(--paper);cursor:not-allowed" placeholder="—"></div></div>${isEnt?`<div class="fg"><label class="fl">Costo unitario ($/unidad)</label><input class="fc" id="mf-costo-unit" type="number" step="0.01" readonly style="background:var(--paper);cursor:not-allowed" placeholder="0.00"></div><div class="fg"><label class="fl">Costo total ($) <span style="font-size:.65rem;color:var(--ink3)">(calculado)</span></label><input class="fc" id="mf-costo" type="number" step="0.01" readonly style="background:var(--paper);cursor:not-allowed" placeholder="0.00"></div>`:''}${dgiiHtml}<div class="fg"><label class="fl">Notas</label><input class="fc" id="mf-notas"></div><button class="btn btn-amber btn-block" onclick="regMov('${tipo}')">💾 Registrar</button></div>`;syncMU();}
 function syncMU(){const sel=document.getElementById('mf-ing');if(!sel)return;const i=ING().find(x=>x.id==sel.value);if(i){const u=document.getElementById('mf-unit');if(u)u.value=i.unidad;// Pre-cargar costo unitario del ingrediente si existe
 const cu=document.getElementById('mf-costo-unit');if(cu&&i.costo){cu.value=i.costo;calcCostoEntrada();}}}
 function calcCostoEntrada(){const cant=N(document.getElementById('mf-cant')?.value)||0;const cu=N(document.getElementById('mf-costo-unit')?.value)||0;const total=document.getElementById('mf-costo');if(total&&cant&&cu)total.value=(cant*cu).toFixed(2);}
 function calcCostoUnitFromTotal(){const cant=N(document.getElementById('mf-cant')?.value)||0;const total=N(document.getElementById('mf-costo')?.value)||0;const cu=document.getElementById('mf-costo-unit');if(cu&&cant>0&&total>0)cu.value=(total/cant).toFixed(4);}
-function regMov(tipo){const iid=parseInt(document.getElementById('mf-ing').value),cant=N(document.getElementById('mf-cant').value);if(!iid||!cant){toast('❌ Completa los campos');return;}const ing=ING().find(i=>i.id==iid);if(!ing)return;if(tipo==='salida'&&ing.cant<cant){if(!confirm(`Stock insuficiente (${R(ing.cant)}). ¿Continuar?`))return;}if(tipo==='entrada')ing.cant+=cant;else ing.cant=Math.max(0,ing.cant-cant);ing.updated=new Date().toISOString();const m={id:uid(),tipo,nombre:ing.nombre,cant,costo:tipo==='entrada'?N(document.getElementById('mf-costo')?.value):0,notas:document.getElementById('mf-notas').value,fecha:new Date().toISOString(),ref:''};DB.movimientos.push(m);syncRow('inventario','update',ing,ing.id);syncRow('movimientos','write',m,m.id);toast(`✅ ${tipo==='entrada'?'Entrada':'Salida'} registrada`);renderStock();document.querySelectorAll('#tabs-inv .tab').forEach((t,i)=>t.classList.toggle('on',i===0));invTab='stock';}
+function regMov(tipo){const iid=parseInt(document.getElementById('mf-ing').value),cant=N(document.getElementById('mf-cant').value);if(!iid||!cant){toast('❌ Completa los campos');return;}const ing=ING().find(i=>i.id==iid);if(!ing)return;if(tipo==='salida'&&ing.cant<cant){if(!confirm(`Stock insuficiente (${R(ing.cant)}). ¿Continuar?`))return;}if(tipo==='entrada')ing.cant+=cant;else ing.cant=Math.max(0,ing.cant-cant);ing.updated=new Date().toISOString();const costoTotal=tipo==='entrada'?N(document.getElementById('mf-costo')?.value):0;const notas=document.getElementById('mf-notas').value;const m={id:uid(),tipo,nombre:ing.nombre,cant,costo:costoTotal,notas,fecha:new Date().toISOString(),ref:''};DB.movimientos.push(m);syncRow('inventario','update',ing,ing.id);syncRow('movimientos','write',m,m.id);
+  // Si es entrada con NCF → registrar también como gasto en 606
+  if(tipo==='entrada'){
+    const ncfProv=(document.getElementById('mf-ncf-prov')?.value||'').trim().toUpperCase();
+    const rncProv=(document.getElementById('mf-rnc-prov')?.value||'').trim();
+    if(ncfProv||rncProv){
+      const g={id:uid(),concepto:'Compra inventario: '+ing.nombre,monto:costoTotal,cat:'Insumos',
+        fecha:today(),metodo:'Efectivo',notas:notas||'Entrada inventario',created:new Date().toISOString(),
+        rncProv,ncfProv,ncfMod:(document.getElementById('mf-ncf-mod')?.value||'').trim().toUpperCase(),
+        tipoBienes:document.getElementById('mf-tipo-bienes')?.value||'9',
+        itbisFacturado:N(document.getElementById('mf-itbis-fact')?.value)||0,
+        itbisRetenido:N(document.getElementById('mf-itbis-ret')?.value)||0,
+        isrRetenido:N(document.getElementById('mf-isr-ret')?.value)||0,
+        formaPago606:document.getElementById('mf-forma-pago')?.value||'1'};
+      DB.gastos.push(g);syncRow('gastos','write',g,g.id);
+      toast('✅ Entrada registrada y gasto 606 guardado');
+    }else{toast(`✅ Entrada registrada`);}
+  }else{toast(`✅ Salida registrada`);}
+  renderStock();document.querySelectorAll('#tabs-inv .tab').forEach((t,i)=>t.classList.toggle('on',i===0));invTab='stock';}
 
 
 /* ── ENTRADAS MASIVAS ─────────────────────────────────────── */
@@ -2076,6 +2083,42 @@ function renderColaMasiva(cont){
       <span style="font-size:.84rem;font-weight:700;color:var(--ink2)">TOTAL ENTRADA:</span>
       <span id="total-masiva" style="font-family:Georgia,serif;font-size:1.1rem;font-weight:700;color:var(--amber)">${money(totalGeneral)}</span>
     </div>
+    <details style="margin-bottom:8px">
+      <summary style="font-size:.74rem;font-weight:700;color:var(--amber);cursor:pointer;padding:6px 0">🇩🇴 Datos DGII 606 para esta compra (opcional)</summary>
+      <div style="padding:6px 0 0;display:grid;gap:6px">
+        <div class="fr2">
+          <div class="fg"><label class="fl">RNC Proveedor</label><input class="fc" id="bk-rnc-prov" placeholder="1-01-12345-6" maxlength="15"></div>
+          <div class="fg"><label class="fl">NCF recibido</label><input class="fc" id="bk-ncf-prov" placeholder="B0100000123" maxlength="19"></div>
+        </div>
+        <div class="fr2">
+          <div class="fg"><label class="fl">NCF Modificado</label><input class="fc" id="bk-ncf-mod" placeholder="Solo NC/ND"></div>
+          <div class="fg"><label class="fl">Tipo Bienes</label>
+            <select class="fc" id="bk-tipo-bienes">
+              <option value="9">09 - Costo de Venta</option>
+              <option value="4">04 - Activos Fijos</option>
+              <option value="2">02 - Suministros/Servicios</option>
+              <option value="3">03 - Arrendamientos</option>
+              <option value="1">01 - Personal</option>
+            </select>
+          </div>
+        </div>
+        <div class="fr2">
+          <div class="fg"><label class="fl">ITBIS Facturado</label><input class="fc" id="bk-itbis-fact" type="number" placeholder="0.00"></div>
+          <div class="fg"><label class="fl">ITBIS Retenido</label><input class="fc" id="bk-itbis-ret" type="number" placeholder="0.00"></div>
+        </div>
+        <div class="fr2">
+          <div class="fg"><label class="fl">ISR Retenido</label><input class="fc" id="bk-isr-ret" type="number" placeholder="0.00"></div>
+          <div class="fg"><label class="fl">Forma de Pago</label>
+            <select class="fc" id="bk-forma-pago">
+              <option value="1">01 - Efectivo</option>
+              <option value="2">02 - Cheques/Trans.</option>
+              <option value="3">03 - Tarjeta</option>
+              <option value="4">04 - Crédito</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </details>
     <button class="btn btn-amber btn-block" onclick="registrarEntradaMasiva()">💾 Registrar ${colaEntradas.length} entrada(s)</button>`:
     `<div style="text-align:center;padding:20px;color:var(--ink3);font-size:.82rem">Escanea o busca productos para agregarlos a la cola</div>`}
   </div>`;
@@ -2113,6 +2156,9 @@ function actualizarTotalesMasiva(){
 async function registrarEntradaMasiva(){
   const validos=colaEntradas.filter(x=>N(x.cant)>0);
   if(!validos.length){toast('❌ Ingresa cantidades a registrar');return;}
+  const ncfProv=(document.getElementById('bk-ncf-prov')?.value||'').trim().toUpperCase();
+  const rncProv=(document.getElementById('bk-rnc-prov')?.value||'').trim();
+  const totalMasiva=validos.reduce((s,x)=>s+N(x.cant)*N(x.costo),0);
   for(const x of validos){
     const ing=ING().find(i=>i.id==x.id);if(!ing)continue;
     ing.cant+=N(x.cant);ing.updated=new Date().toISOString();
@@ -2121,7 +2167,23 @@ async function registrarEntradaMasiva(){
     syncRow('inventario','update',ing,ing.id);
     syncRow('movimientos','write',m,m.id);
   }
-  toast('✅ '+validos.length+' entrada(s) registrada(s)');
+  // Si hay NCF → registrar un gasto consolidado por la compra completa
+  if(ncfProv||rncProv){
+    const nombres=validos.map(x=>x.nombre).join(', ');
+    const g={id:uid(),concepto:'Compra masiva inventario: '+nombres.slice(0,80),monto:totalMasiva,
+      cat:'Insumos',fecha:today(),metodo:'Efectivo',notas:'Entrada masiva',created:new Date().toISOString(),
+      rncProv,ncfProv,
+      ncfMod:(document.getElementById('bk-ncf-mod')?.value||'').trim().toUpperCase(),
+      tipoBienes:document.getElementById('bk-tipo-bienes')?.value||'9',
+      itbisFacturado:N(document.getElementById('bk-itbis-fact')?.value)||0,
+      itbisRetenido:N(document.getElementById('bk-itbis-ret')?.value)||0,
+      isrRetenido:N(document.getElementById('bk-isr-ret')?.value)||0,
+      formaPago606:document.getElementById('bk-forma-pago')?.value||'1'};
+    DB.gastos.push(g);syncRow('gastos','write',g,g.id);
+    toast('✅ '+validos.length+' entrada(s) y gasto 606 registrado');
+  }else{
+    toast('✅ '+validos.length+' entrada(s) registrada(s)');
+  }
   colaEntradas=[];
   document.querySelectorAll('#tabs-inv .tab').forEach((t,i)=>t.classList.toggle('on',i===0));
   invTab='stock';renderStock();
@@ -3157,11 +3219,11 @@ async function confirmarAnulacionEcf(){
   try{
     const r=await fetch(`${GATEWAY_URL}/api/ecf/anular`,{
       method:'POST',headers:{...sbHeaders(),'Content-Type':'application/json'},
-      body:JSON.stringify({ncf:env.ncf,rncEmisor:env.rnc_emisor,razon,anulacionId:anulacion.id})
+      body:JSON.stringify({ncf:env.ncf,rncEmisor:env.rnc_emisor||ECF.rnc||'',razon:String(razon),anulacionId:anulacion.id})
     });
     if(r.ok){
       const data=await r.json();
-      anulacion.trackId=data.trackId;anulacion.estado=data.estado||'enviado';
+      anulacion.track_id=data.trackId;anulacion.estado=data.estado||'enviado';
       syncRow('ecf_anulaciones','update',anulacion,anulacion.id);
     }
   }catch(e){console.warn('[ECF] Anulación gateway error:',e.message);}
@@ -3170,6 +3232,24 @@ async function confirmarAnulacionEcf(){
 /* ═══════════════════════════════════════════════════════════════
    REPORTES DGII 606 / 607 / 608
 ═══════════════════════════════════════════════════════════════ */
+function anularNCFGasto(gastoId){
+  if(!gastoId){toast('⚠️ Gasto no identificado');return;}
+  const g=DB.gastos.find(x=>x.id===gastoId||String(x.id)===String(gastoId));
+  if(!g){toast('⚠️ Gasto no encontrado');return;}
+  if(g.anulado){toast('ℹ️ Este NCF ya fue anulado');return;}
+  if(!confirm(`¿Anular NCF ${g.ncfProv||'—'} de ${g.rncProv||'proveedor desconocido'}?`))return;
+  g.anulado=true;g.fechaAnulacion=today();g.updated=new Date().toISOString();
+  syncRow('gastos','update',g,g.id);
+  // Register in ecf_anulaciones for 608
+  const an={id:uid(),ecf_envio_id:null,ncf:g.ncfProv,rnc_emisor:ECF.rnc||'',
+    tipo_cf:'proveedor',razon_anulacion:'04',fecha_anulacion:today(),
+    estado:'local',created:new Date().toISOString()};
+  if(!DB.ecf_anulaciones)DB.ecf_anulaciones=[];
+  DB.ecf_anulaciones.push(an);syncRow('ecf_anulaciones','write',an,an.id);
+  toast('✅ NCF anulado y registrado en 608');
+  const mes=document.getElementById('rep-mes-filter')?.value||today().slice(0,7);
+  renderReporte606(document.getElementById('rep-content'),mes);
+}
 function renderReporte606(cont,mes){
   // 606 = Compras / Gastos con NCF de proveedor
   const gastos=(DB.gastos||[]).filter(g=>g.ncfProv&&g.fecha&&normFecha(g.fecha).startsWith(mes));
@@ -3189,6 +3269,7 @@ function renderReporte606(cont,mes){
     <td style="padding:5px 7px;font-size:.75rem;border-bottom:1px solid var(--border);text-align:right">${money(g.isrRetenido||0)}</td>
     <td style="padding:5px 7px;font-size:.75rem;border-bottom:1px solid var(--border)">${['','01','02','03','04','05','06','07','08','09','10','11'][parseInt(g.tipoBienes)||0]||''}</td>
     <td style="padding:5px 7px;font-size:.75rem;border-bottom:1px solid var(--border)">${g.formaPago606||'01'}</td>
+    <td style="padding:5px 7px;font-size:.75rem;border-bottom:1px solid var(--border)">${g.anulado?`<span style="font-size:.65rem;color:var(--ink3);font-style:italic">Anulado</span>`:`<button onclick="anularNCFGasto('${g.id||''}')" style="font-size:.65rem;background:rgba(192,48,42,.1);border:none;color:var(--danger);border-radius:6px;padding:2px 7px;cursor:pointer">🚫 Anular</button>`}</td>
   </tr>`).join('');
   cont.innerHTML=`<div class="card"><div class="card-hd">📋 Formato 606 — Compras y Gastos con NCF <span style="font-size:.68rem;font-weight:400;color:var(--ink3)">${mes}</span>
     <button class="btn btn-blue btn-sm" style="margin-left:auto" onclick="exportar606('${mes}')">⬇️ Exportar TXT</button></div>
@@ -3205,6 +3286,7 @@ function renderReporte606(cont,mes){
         <th style="padding:6px 7px;font-size:.72rem;text-align:right">ISR Ret.</th>
         <th style="padding:6px 7px;font-size:.72rem">Tipo Bien</th>
         <th style="padding:6px 7px;font-size:.72rem">F.Pago</th>
+        <th style="padding:6px 7px;font-size:.72rem">Acción</th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table></div>
@@ -3226,6 +3308,7 @@ function renderReporte607(cont,mes){
     <td style="padding:5px 7px;font-size:.75rem;border-bottom:1px solid var(--border);text-align:right">${money(e.itbis)}</td>
     <td style="padding:5px 7px;font-size:.75rem;border-bottom:1px solid var(--border);text-align:right">${money(e.total)}</td>
     <td style="padding:5px 7px;font-size:.75rem;border-bottom:1px solid var(--border)"><span style="padding:2px 7px;border-radius:10px;font-size:.68rem;font-weight:700;background:${e.estado==='aceptado'?'rgba(42,128,64,.15)':e.estado==='rechazado'?'rgba(192,48,42,.15)':'rgba(200,120,30,.15)'};color:${e.estado==='aceptado'?'var(--ok)':e.estado==='rechazado'?'var(--danger)':'var(--warn)'}">${e.estado||'pendiente'}</span></td>
+    <td style="padding:5px 7px;font-size:.75rem;border-bottom:1px solid var(--border)">${e.estado!=='anulado'?`<button onclick="openAnulacionEcf('${e.id}')" style="font-size:.65rem;background:rgba(192,48,42,.1);border:none;color:var(--danger);border-radius:6px;padding:2px 7px;cursor:pointer">🚫 Anular</button>`:''}</td>
   </tr>`).join('');
   cont.innerHTML=`<div class="card"><div class="card-hd">📋 Formato 607 — Ventas con e-CF <span style="font-size:.68rem;font-weight:400;color:var(--ink3)">${mes}</span>
     <button class="btn btn-blue btn-sm" style="margin-left:auto" onclick="exportar607('${mes}')">⬇️ Exportar TXT</button></div>
@@ -3240,6 +3323,7 @@ function renderReporte607(cont,mes){
         <th style="padding:6px 7px;font-size:.72rem;text-align:right">ITBIS</th>
         <th style="padding:6px 7px;font-size:.72rem;text-align:right">Total</th>
         <th style="padding:6px 7px;font-size:.72rem">Estado</th>
+        <th style="padding:6px 7px;font-size:.72rem">Acción</th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table></div>
@@ -3432,8 +3516,8 @@ async function emitirEcf(){
     <div style="flex:1">
       <div style="font-size:9px;font-weight:700;letter-spacing:.7px;color:#c0302a;margin-bottom:3px">COMPROBANTE FISCAL ELECTRÓNICO</div>
       <div style="font-size:10px;color:#555;margin-bottom:2px">Código de seguridad: <b style="font-size:12px;letter-spacing:2px;color:#1c0f00">${codigoSeguridad}</b></div>
-      <div style="font-size:9px;color:#888;word-break:break-all">${qrUrl}</div>
-      <div id="ecf-estado-${envioId}" style="font-size:9px;margin-top:4px;color:${ECF.certMode==='none'?'#c87820':'#2a8040'};font-weight:700">${ECF.certMode==='none'?'⏳ Pendiente de firma — configura certificado DGII':'⏳ Enviando a DGII...'}</div>
+      <div style="font-size:8px;color:#aaa;word-break:break-all;display:none" id="ecf-qrurl-${envioId}">${qrUrl}</div>
+      <div id="ecf-estado-${envioId}" style="font-size:9px;margin-top:4px;display:none"></div>
     </div>
   </div>
   <div style="border-top:1px solid #ddd;padding-top:10px;text-align:center">
@@ -3486,7 +3570,7 @@ function abrirNuevaVenta(){ventaActiva={items:[],cliente:'',descuento:0};renderV
 function renderVentas(){
   const cont=document.getElementById('ventas-content');if(ventaTab==='historial'){renderVentasHistorial(cont);return;}
   const total=ventaActiva.items.reduce((s,i)=>s+N(i.precio)*(i.esKg?parseFloat(i.cant)||0:N(i.cant)),0);const desc=N(ventaActiva.descuento),totalFinal=Math.max(0,total-desc);
-  const prodsCat=PRODS_DB().filter(p=>!p.estatus||p.estatus==='activo').map(p=>({id:'p_'+p.id,nombre:p.nombre,precio:N(p.precio),tipo:'producto',cat:p.cat,ingId:'',codigoProd:p.codigoProd||''}));
+  const prodsCat=PRODS_DB().filter(p=>(!p.estatus||p.estatus==='activo')&&N(p.precio)>0).map(p=>({id:'p_'+p.id,nombre:p.nombre,precio:N(p.precio),tipo:'producto',cat:p.cat,ingId:'',codigoProd:p.codigoProd||'',esKg:false}));
   const prodsInv=ING().filter(i=>i.ventaCaja&&N(i.precioVenta)>0&&(!i.estatus||i.estatus==='activo')&&i.tipo==='ingrediente').map(i=>({id:'i_'+i.id,nombre:i.nombre,precio:N(i.precioVenta),tipo:'inventario',unidad:i.unidad,ingId:i.id,codigoProd:i.codigoProd||'',esKg:i.unidad==='kg'}));
   const prodsServ=ING().filter(i=>i.tipo==='servicio'&&N(i.precioVenta)>0&&(!i.estatus||i.estatus==='activo')).map(i=>({id:'s_'+i.id,nombre:i.nombre,precio:N(i.precioVenta),tipo:'servicio',unidad:'',ingId:i.id,codigoProd:i.codigoProd||'',esKg:false}));
   const allProds=[...prodsCat,...prodsInv,...prodsServ].sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''));
@@ -3519,19 +3603,33 @@ function renderVentas(){
     <button onclick="quitarItemVenta(${idx})" style="background:rgba(192,48,42,.1);border:none;color:var(--danger);border-radius:6px;width:26px;height:26px;cursor:pointer;font-size:.8rem">✕</button>
   </div>`;}).join(''):emptyHTML('🛒','Agrega productos para iniciar');
   const prodsHTML=allProds.map(p=>`<button onclick="agregarItemVenta('${p.id}','${p.nombre.replace(/'/g,"\\'")}',${p.precio},'${p.tipo}','${p.ingId||''}',${p.esKg?'true':'false'})" style="background:${p.esKg?'rgba(201,124,30,.07)':'var(--paper3)'};border:1.5px solid ${p.esKg?'rgba(201,124,30,.4)':'var(--border)'};border-radius:var(--r8);padding:8px 10px;cursor:pointer;text-align:left;width:100%"><div style="font-size:.8rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.nombre}${p.esKg?' <span style=\"font-size:.6rem;background:rgba(201,124,30,.2);color:var(--amber);border-radius:4px;padding:1px 4px\">kg</span>':''}</div><div style="font-size:.72rem;color:var(--amber);font-weight:700;margin-top:2px">${money(p.precio)}${p.esKg?' /kg':p.unidad?' /'+p.unidad:''}</div><div style="font-size:.64rem;color:var(--ink3)">${p.tipo==='inventario'?'📦 Ingrediente':p.tipo==='servicio'?'🛎 Servicio':'🎂 '+p.cat}</div></button>`).join('');
-  cont.innerHTML=`<div class="card" style="margin-bottom:10px"><div class="card-hd">🛍 Carrito</div><div class="fg"><label class="fl">Cliente (opcional)</label><input class="fc" id="venta-cliente" value="${ventaActiva.cliente||''}" placeholder="Nombre del cliente" oninput="ventaActiva.cliente=this.value" style="font-size:.84rem;padding:8px 10px"></div>${itemsHTML}${ventaActiva.items.length?`<div class="divider"></div><div style="display:flex;align-items:center;gap:8px;margin-top:8px"><label style="font-size:.75rem;font-weight:700;color:var(--ink3)">Descuento ($):</label><input type="number" value="${ventaActiva.descuento||0}" min="0" oninput="ventaActiva.descuento=N(this.value);renderVentas()" style="padding:6px 9px;border:1.5px solid var(--border2);border-radius:8px;font-size:.82rem;width:90px;background:var(--paper2);outline:none"></div><div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0 4px;border-top:2px solid var(--border2);margin-top:8px"><span style="font-family:Georgia,serif;font-size:1.2rem;font-weight:700">TOTAL: ${money(totalFinal)}</span>${desc>0?`<span style="font-size:.75rem;color:var(--ok)">Desc: -${money(desc)}</span>`:''}</div><div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap"><button class="btn btn-amber" onclick="cobrarVenta()">💰 Cobrar ${money(totalFinal)}</button><button class="btn btn-ghost btn-sm" onclick="ventaActiva={items:[],cliente:'',descuento:0};renderVentas()">🗑 Cancelar</button></div>`:''}</div><div class="card"><div class="card-hd">➕ Agregar producto</div><input class="fc" id="venta-buscar" placeholder="🔍 Buscar producto..." oninput="filtrarProdsVenta(this.value)" onkeydown="if(event.key==='Enter'&&this.value.trim()){pistolearVenta(this.value.trim());this.value='';filtrarProdsVenta('');this.focus();event.preventDefault();}" placeholder="🔍 Buscar o escanea código de barras..." style="margin-bottom:10px;font-size:.84rem" autocomplete="off"><div id="venta-prods-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:7px">${prodsHTML}</div></div>`;
+  cont.innerHTML=`<div class="card" style="margin-bottom:10px"><div class="card-hd">🛍 Carrito</div><div class="fg"><label class="fl">Cliente (opcional)</label><input class="fc" id="venta-cliente" value="${ventaActiva.cliente||''}" placeholder="Nombre del cliente" oninput="ventaActiva.cliente=this.value" style="font-size:.84rem;padding:8px 10px"></div>${itemsHTML}${ventaActiva.items.length?`<div class="divider"></div><div style="display:flex;align-items:center;gap:8px;margin-top:8px"><label style="font-size:.75rem;font-weight:700;color:var(--ink3)">Descuento ($):</label><input type="number" value="${ventaActiva.descuento||0}" min="0" oninput="ventaActiva.descuento=N(this.value);renderVentas()" style="padding:6px 9px;border:1.5px solid var(--border2);border-radius:8px;font-size:.82rem;width:90px;background:var(--paper2);outline:none"></div><div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0 4px;border-top:2px solid var(--border2);margin-top:8px"><span class="carrito-total" style="font-family:Georgia,serif;font-size:1.2rem;font-weight:700">TOTAL: ${money(totalFinal)}</span>${desc>0?`<span style="font-size:.75rem;color:var(--ok)">Desc: -${money(desc)}</span>`:''}</div><div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap"><button class="btn btn-amber btn-cobrar-main" onclick="cobrarVenta()">💰 Cobrar ${money(totalFinal)}</button><button class="btn btn-ghost btn-sm" onclick="ventaActiva={items:[],cliente:'',descuento:0};renderVentas()">🗑 Cancelar</button></div>`:''}</div><div class="card"><div class="card-hd">➕ Agregar producto</div><input class="fc" id="venta-buscar" placeholder="🔍 Buscar producto..." oninput="filtrarProdsVenta(this.value)" onkeydown="if(event.key==='Enter'&&this.value.trim()){pistolearVenta(this.value.trim());this.value='';filtrarProdsVenta('');this.focus();event.preventDefault();}" placeholder="🔍 Buscar o escanea código de barras..." style="margin-bottom:10px;font-size:.84rem" autocomplete="off"><div id="venta-prods-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:7px">${prodsHTML}</div></div>`;
 }
-function filtrarProdsVenta(q){const prodsCat=PRODS_DB().filter(p=>!p.estatus||p.estatus==='activo').map(p=>({id:'p_'+p.id,nombre:p.nombre,precio:N(p.precio),tipo:'producto',cat:p.cat,ingId:'',codigoProd:p.codigoProd||''}));const prodsInv=ING().filter(i=>i.ventaCaja&&i.tipo==='ingrediente'&&N(i.precioVenta)>0&&(!i.estatus||i.estatus==='activo')).map(i=>({id:'i_'+i.id,nombre:i.nombre,precio:N(i.precioVenta),tipo:'inventario',unidad:i.unidad,ingId:i.id,codigoProd:i.codigoProd||'',esKg:i.unidad==='kg'}));const prodsServ=ING().filter(i=>i.tipo==='servicio'&&N(i.precioVenta)>0&&(!i.estatus||i.estatus==='activo')).map(i=>({id:'s_'+i.id,nombre:i.nombre,precio:N(i.precioVenta),tipo:'servicio',unidad:'',ingId:i.id,codigoProd:i.codigoProd||'',esKg:false}));const all=[...prodsCat,...prodsInv,...prodsServ];const filtered=q?all.filter(p=>p.nombre.toLowerCase().includes(q.toLowerCase())||(p.codigoProd&&p.codigoProd.toLowerCase().includes(q.toLowerCase()))):all;const grid=document.getElementById('venta-prods-grid');if(!grid)return;grid.innerHTML=filtered.map(p=>`<button onclick="agregarItemVenta('${p.id}','${p.nombre.replace(/'/g,"\\'")}',${ p.precio},'${p.tipo}','${p.ingId||''}',${p.esKg?'true':'false'})" style="background:${p.esKg?'rgba(201,124,30,.07)':p.tipo==='servicio'?'rgba(90,160,100,.08)':'var(--paper3)'};border:1.5px solid ${p.esKg?'rgba(201,124,30,.4)':p.tipo==='servicio'?'rgba(90,160,100,.4)':'var(--border)'};border-radius:var(--r8);padding:8px 10px;cursor:pointer;text-align:left;width:100%"><div style="font-size:.8rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.tipo==='servicio'?'🛎 ':''}${p.nombre}${p.esKg?' <span style=\\"font-size:.6rem;background:rgba(201,124,30,.2);color:var(--amber);border-radius:4px;padding:1px 4px\\">kg</span>':''}</div><div style="font-size:.72rem;color:${p.esKg?'var(--amber)':p.tipo==='servicio'?'var(--sage)':'var(--amber)'};font-weight:700;margin-top:2px">${money(p.precio)}${p.esKg?' /kg':''}</div></button>`).join('');}
-function pistolearVenta(q){if(!q)return;const prodsCat=PRODS_DB().filter(p=>!p.estatus||p.estatus==='activo').map(p=>({id:'p_'+p.id,nombre:p.nombre,precio:N(p.precio),tipo:'producto',cat:p.cat,ingId:'',codigoProd:p.codigoProd||''}));const prodsInv=ING().filter(i=>i.ventaCaja&&i.tipo==='ingrediente'&&N(i.precioVenta)>0&&(!i.estatus||i.estatus==='activo')).map(i=>({id:'i_'+i.id,nombre:i.nombre,precio:N(i.precioVenta),tipo:'inventario',unidad:i.unidad,ingId:i.id,codigoProd:i.codigoProd||'',esKg:i.unidad==='kg'}));const prodsServ=ING().filter(i=>i.tipo==='servicio'&&N(i.precioVenta)>0&&(!i.estatus||i.estatus==='activo')).map(i=>({id:'s_'+i.id,nombre:i.nombre,precio:N(i.precioVenta),tipo:'servicio',unidad:'',ingId:i.id,codigoProd:i.codigoProd||'',esKg:false}));const all=[...prodsCat,...prodsInv,...prodsServ];const found=all.find(p=>p.codigoProd&&p.codigoProd.trim()===q.trim());if(found){agregarItemVenta(found.id,found.nombre,found.precio,found.tipo,found.ingId||'');toast('✅ '+found.nombre+' agregado');}else toast('⚠️ Código no encontrado: '+q);}
+function filtrarProdsVenta(q){const prodsCat=PRODS_DB().filter(p=>(!p.estatus||p.estatus==='activo')&&N(p.precio)>0).map(p=>({id:'p_'+p.id,nombre:p.nombre,precio:N(p.precio),tipo:'producto',cat:p.cat,ingId:'',codigoProd:p.codigoProd||'',esKg:false}));const prodsInv=ING().filter(i=>i.ventaCaja&&i.tipo==='ingrediente'&&N(i.precioVenta)>0&&(!i.estatus||i.estatus==='activo')).map(i=>({id:'i_'+i.id,nombre:i.nombre,precio:N(i.precioVenta),tipo:'inventario',unidad:i.unidad,ingId:i.id,codigoProd:i.codigoProd||'',esKg:i.unidad==='kg'}));const prodsServ=ING().filter(i=>i.tipo==='servicio'&&N(i.precioVenta)>0&&(!i.estatus||i.estatus==='activo')).map(i=>({id:'s_'+i.id,nombre:i.nombre,precio:N(i.precioVenta),tipo:'servicio',unidad:'',ingId:i.id,codigoProd:i.codigoProd||'',esKg:false}));const all=[...prodsCat,...prodsInv,...prodsServ];const filtered=q?all.filter(p=>p.nombre.toLowerCase().includes(q.toLowerCase())||(p.codigoProd&&p.codigoProd.toLowerCase().includes(q.toLowerCase()))):all;const grid=document.getElementById('venta-prods-grid');if(!grid)return;grid.innerHTML=filtered.map(p=>`<button onclick="agregarItemVenta('${p.id}','${p.nombre.replace(/'/g,"\\'")}',${ p.precio},'${p.tipo}','${p.ingId||''}',${p.esKg?'true':'false'})" style="background:${p.esKg?'rgba(201,124,30,.07)':p.tipo==='servicio'?'rgba(90,160,100,.08)':'var(--paper3)'};border:1.5px solid ${p.esKg?'rgba(201,124,30,.4)':p.tipo==='servicio'?'rgba(90,160,100,.4)':'var(--border)'};border-radius:var(--r8);padding:8px 10px;cursor:pointer;text-align:left;width:100%"><div style="font-size:.8rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.tipo==='servicio'?'🛎 ':''}${p.nombre}${p.esKg?' <span style=\\"font-size:.6rem;background:rgba(201,124,30,.2);color:var(--amber);border-radius:4px;padding:1px 4px\\">kg</span>':''}</div><div style="font-size:.72rem;color:${p.esKg?'var(--amber)':p.tipo==='servicio'?'var(--sage)':'var(--amber)'};font-weight:700;margin-top:2px">${money(p.precio)}${p.esKg?' /kg':''}</div></button>`).join('');}
+function pistolearVenta(q){if(!q)return;const prodsCat=PRODS_DB().filter(p=>(!p.estatus||p.estatus==='activo')&&N(p.precio)>0).map(p=>({id:'p_'+p.id,nombre:p.nombre,precio:N(p.precio),tipo:'producto',cat:p.cat,ingId:'',codigoProd:p.codigoProd||'',esKg:false}));const prodsInv=ING().filter(i=>i.ventaCaja&&i.tipo==='ingrediente'&&N(i.precioVenta)>0&&(!i.estatus||i.estatus==='activo')).map(i=>({id:'i_'+i.id,nombre:i.nombre,precio:N(i.precioVenta),tipo:'inventario',unidad:i.unidad,ingId:i.id,codigoProd:i.codigoProd||'',esKg:i.unidad==='kg'}));const prodsServ=ING().filter(i=>i.tipo==='servicio'&&N(i.precioVenta)>0&&(!i.estatus||i.estatus==='activo')).map(i=>({id:'s_'+i.id,nombre:i.nombre,precio:N(i.precioVenta),tipo:'servicio',unidad:'',ingId:i.id,codigoProd:i.codigoProd||'',esKg:false}));const all=[...prodsCat,...prodsInv,...prodsServ];const found=all.find(p=>p.codigoProd&&p.codigoProd.trim()===q.trim());if(found){agregarItemVenta(found.id,found.nombre,found.precio,found.tipo,found.ingId||'');toast('✅ '+found.nombre+' agregado');}else toast('⚠️ Código no encontrado: '+q);}
 function agregarItemVenta(id,nombre,precio,tipo,ingId,esKg){const existing=ventaActiva.items.find(i=>i.id===id);if(existing){if(!esKg)existing.cant++;/* kg items: user edits manually */}else ventaActiva.items.push({id,nombre,precio:N(precio),cant:esKg?0:1,tipo,ingId,esKg:!!esKg});renderVentas();requestAnimationFrame(()=>{if(esKg){const inp=document.getElementById('venta-qty-'+id.replace(/[^a-zA-Z0-9]/g,'_'));if(inp){inp.focus();inp.select();return;}}const sb=document.getElementById('venta-buscar');if(sb){sb.focus();sb.select();}});}
 function cambiarCantVenta(idx,delta){const item=ventaActiva.items[idx];if(!item)return;if(item.esKg)return;// kg items edited via input
 item.cant=Math.max(1,item.cant+delta);renderVentas();}
-function setCantKg(idx,val){const item=ventaActiva.items[idx];if(!item)return;const v=parseFloat(val)||0;item.cant=Math.max(0,v);// Update total display inline without full re-render
-const totalEl=document.getElementById('venta-subtotal-'+idx);if(totalEl)totalEl.textContent=money(item.precio*item.cant);}
+function setCantKg(idx,val){
+  const item=ventaActiva.items[idx];if(!item)return;
+  const v=parseFloat(val)||0;
+  item.cant=Math.max(0,v);
+  // Update item subtotal inline
+  const subEl=document.getElementById('venta-subtotal-'+idx);
+  if(subEl)subEl.textContent=money(item.precio*item.cant);
+  // Recalculate carrito total and update Cobrar button + TOTAL display
+  const total=ventaActiva.items.reduce((s,i)=>s+N(i.precio)*(i.esKg?parseFloat(i.cant)||0:N(i.cant)),0);
+  const desc=N(ventaActiva.descuento);
+  const totalFinal=Math.max(0,total-desc);
+  const totalEl=document.querySelector('#vw-ventas .carrito-total');
+  if(totalEl)totalEl.textContent='TOTAL: '+money(totalFinal);
+  const cobrarBtn=document.querySelector('#vw-ventas .btn-cobrar-main');
+  if(cobrarBtn)cobrarBtn.textContent='💰 Cobrar '+money(totalFinal);
+}
 function quitarItemVenta(idx){ventaActiva.items.splice(idx,1);renderVentas();}
 function cobrarVenta(){if(!ventaActiva.items.length){toast('❌ Agrega al menos un producto');return;}const total=ventaActiva.items.reduce((s,i)=>s+N(i.precio)*(i.esKg?parseFloat(i.cant)||0:N(i.cant)),0)-N(ventaActiva.descuento);const metSelect=['Efectivo','Transferencia','Tarjeta','A Crédito (CxC)','Otro'].map(m=>`<option>${m}</option>`).join('');cobroMode='venta';document.getElementById('cobro-content').innerHTML=`<div style="font-family:Georgia,serif;font-size:1.35rem;color:var(--amber);margin-bottom:12px">Total: ${money(total)}</div><div style="font-size:.85rem;color:var(--ink2);margin-bottom:12px">${ventaActiva.items.map(i=>`${i.esKg?(parseFloat(i.cant)||0)+'kg':i.cant+'×'} ${i.nombre}`).join(', ')}</div><div class="fg"><label class="fl">Método de pago</label><select class="fc" id="venta-metodo">${metSelect}</select></div><div class="fg"><label class="fl">Monto recibido ($)</label><input class="fc" id="venta-recibido" type="number" value="${total.toFixed(2)}" oninput="calcCambio()"></div><div id="venta-cambio" style="font-size:.85rem;color:var(--ok);font-weight:700;margin-top:6px"></div>`;const btn=document.getElementById('cobro-confirm-btn');if(btn){btn.style.display='';btn.onclick=confirmarCobroVenta;}calcCambio();om('mo-cobro');}
 function calcCambio(){const total=ventaActiva.items.reduce((s,i)=>s+N(i.precio)*(i.esKg?parseFloat(i.cant)||0:N(i.cant)),0)-N(ventaActiva.descuento);const rec=N(document.getElementById('venta-recibido')?.value)||0;const el=document.getElementById('venta-cambio');if(el)el.textContent=rec>0&&rec-total>=0?`💵 Cambio: ${money(rec-total)}`:''; }
-async function confirmarCobroVenta(){const metodo=document.getElementById('venta-metodo')?.value||'Efectivo';const total=ventaActiva.items.reduce((s,i)=>s+N(i.precio)*(i.esKg?parseFloat(i.cant)||0:N(i.cant)),0)-N(ventaActiva.descuento);for(const item of ventaActiva.items){if(item.tipo==='servicio')continue;if(item.tipo==='inventario'&&item.ingId){const ing=ING().find(i=>i.id==item.ingId);if(ing&&N(ing.cant)<(item.esKg?parseFloat(item.cant)||0:N(item.cant))){toast(`❌ Sin stock: ${ing.nombre}`);return;}}else if(item.tipo==='producto'){const pid=item.id.replace('p_','');const prod=PRODS_DB().find(p=>p.id==pid);if(prod){const ings=Array.isArray(prod.ings)?prod.ings:(typeof prod.ings==='string'?JSON.parse(prod.ings||'[]'):[]);for(const u of ings){const ing=ING().find(i=>i.id==u.iid);if(ing&&N(ing.cant)<N(u.cant)*N(item.cant)){toast(`❌ Sin stock de ${ing.nombre}`);return;}}}}}
+async function confirmarCobroVenta(){const metodo=document.getElementById('venta-metodo')?.value||'Efectivo';const total=ventaActiva.items.reduce((s,i)=>s+N(i.precio)*(i.esKg?parseFloat(i.cant)||0:N(i.cant)),0)-N(ventaActiva.descuento);for(const item of ventaActiva.items){if(item.tipo==='servicio')continue;if(item.tipo==='inventario'&&item.ingId){const ing=ING().find(i=>i.id==item.ingId);if(ing){const need=item.esKg?parseFloat(item.cant)||0:N(item.cant);const have=N(ing.cant);if(have<need){toast(`⚠️ Stock insuficiente de ${ing.nombre} — Tienes: ${R(have)} ${ing.unidad||'u'} · Necesitas: ${R(need)} ${ing.unidad||'u'}`);return;}}}else if(item.tipo==='producto'){const pid=item.id.replace('p_','');const prod=PRODS_DB().find(p=>p.id==pid);if(prod){const ings=Array.isArray(prod.ings)?prod.ings:(typeof prod.ings==='string'?JSON.parse(prod.ings||'[]'):[]);for(const u of ings){const ing=ING().find(i=>i.id==u.iid);if(ing){const need=N(u.cant)*N(item.cant);const have=N(ing.cant);if(have<need){toast(`⚠️ Stock insuficiente de ${ing.nombre} — Tienes: ${R(have)} ${ing.unidad||'u'} · Necesitas: ${R(need)} ${ing.unidad||'u'}`);return;}}}}}}
   const v={id:uid(),cliente:ventaActiva.cliente||'Mostrador',items:ventaActiva.items,total,descuento:N(ventaActiva.descuento),metodo,fecha:today(),hora:new Date().toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit'}),created:new Date().toISOString()};
   // items se envía como array nativo (Supabase jsonb lo acepta)
   DB.ventas.push(v);await syncRow('ventas','write',v,v.id);
